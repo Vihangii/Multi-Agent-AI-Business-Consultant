@@ -71,6 +71,12 @@ class PipelineResult:
         if self.recommendations is not None:
             result["recommendations"] = self.recommendations
 
+        # Include metadata about data processing/detection
+        result["date_column"] = self.date_column
+        result["revenue_column"] = self.revenue_column
+        result["raw_row_count"] = self.raw_row_count
+        result["cleaned_row_count"] = self.cleaned_row_count
+
         return result
 
 
