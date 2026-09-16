@@ -62,6 +62,9 @@ class PipelineResult:
         if self.analysis is not None:
             result["analysis"] = self.analysis
 
+        if self.cleaned_df is not None:
+            result["cleaned_data"] = self.cleaned_df.to_dict(orient="records")
+
         if self.forecast_summary is not None:
             result["forecast_summary"] = self.forecast_summary
 

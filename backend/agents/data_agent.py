@@ -52,7 +52,7 @@ def find_date_column(df: pd.DataFrame) -> str | None:
     # Strategy 3: Try parsing each column as datetime
     for col in df.columns:
         try:
-            parsed = pd.to_datetime(df[col], infer_datetime_format=True, errors="coerce")
+            parsed = pd.to_datetime(df[col], errors="coerce")
             if parsed.notna().sum() > len(df) * 0.5:
                 return col
         except Exception:
@@ -132,7 +132,7 @@ def clean_dataframe(
     cleaned["ds"] = pd.to_datetime(cleaned["ds"], errors="coerce")
 
     # Parse revenue to numeric (handles currency symbols, commas, etc.)
-    if cleaned["y"].dtype == object:
+    if not pd.api.types.is_numeric_dtype(cleaned["y"]):
         cleaned["y"] = (
             cleaned["y"]
             .astype(str)

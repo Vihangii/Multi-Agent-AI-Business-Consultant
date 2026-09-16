@@ -64,15 +64,16 @@ async def health_check() -> Dict[str, str]:
 @app.post("/analyze", tags=["Analysis"])
 async def analyze_dataset(
     file: UploadFile = File(..., description="The CSV or Excel file containing transaction/revenue data."),
-    periods: int = Query(
-        default=180,
-        description="Number of periods to forecast into the future (granularity auto-detected).",
+    periods: int | None = Query(
+        default=None,
+        description="Number of periods to forecast into the future. Defaults to a ~6-month horizon for the detected/selected frequency.",
         ge=2,
         le=1000,
     ),
     frequency: str | None = Query(
         default=None,
-        description="Override for forecast frequency (e.g., 'D', 'W', 'MS').",
+        description="Override for forecast frequency: 'D' (daily), 'W' (weekly), or 'MS' (monthly). Auto-detected if omitted.",
+        pattern="^(D|W|MS)$",
     ),
     skip_recommendations: bool = Query(
         default=False,

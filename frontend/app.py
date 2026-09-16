@@ -132,17 +132,16 @@ def call_analyze_api(
     backend_url: str,
     file_bytes: bytes,
     file_name: str,
-    periods: int,
+    periods: int | None,
     frequency: str | None,
     skip_recommendations: bool,
 ) -> dict | None:
     """Call the FastAPI backend's /analyze endpoint."""
     endpoint = f"{backend_url.rstrip('/')}/analyze"
     files = {"file": (file_name, file_bytes, "text/csv")}
-    params = {
-        "periods": periods,
-        "skip_recommendations": skip_recommendations,
-    }
+    params = {"skip_recommendations": skip_recommendations}
+    if periods is not None:
+        params["periods"] = periods
     if frequency:
         params["frequency"] = frequency
         
@@ -208,15 +207,6 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔮 Forecasting Options")
     
-    forecast_periods = st.sidebar.slider(
-        "Forecast Horizon",
-        min_value=7,
-        max_value=365,
-        value=180,
-        step=7,
-        help="Number of future intervals to forecast.",
-    )
-    
     freq_options = {
         "Auto-detect": None,
         "Daily ('D')": "D",
@@ -229,6 +219,26 @@ def main():
         help="Enforce forecasting at a particular time granularity.",
     )
     frequency_override = freq_options[selected_freq_label]
+
+    # Slider bounds per frequency: (min, max, default, step)
+    horizon_bounds = {
+        "D": (7, 365, 180, 7),
+        "W": (4, 104, 26, 1),
+        "MS": (1, 24, 6, 1),
+    }
+    if frequency_override is None:
+        forecast_periods = None
+        st.sidebar.caption("Horizon: ~6 months, based on detected data granularity.")
+    else:
+        lo, hi, default, step = horizon_bounds[frequency_override]
+        forecast_periods = st.sidebar.slider(
+            "Forecast Horizon",
+            min_value=lo,
+            max_value=hi,
+            value=default,
+            step=step,
+            help=f"Number of future {selected_freq_label.split(' ')[0].lower()} periods to forecast.",
+        )
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("🤖 AI Consult Strategy")
@@ -393,7 +403,7 @@ def main():
                 <div class="metric-card">
                     <div class="metric-label">Forecast Outlook</div>
                     <div class="metric-value" style="color: {ft_color};">{f_growth:+.2f}%</div>
-                    <div class="metric-desc">Trend: {f_trend} (6-Month outlook)</div>
+                    <div class="metric-desc">Trend: {f_trend} ({forecast_sum.get('forecast_periods', '?')} × '{forecast_sum.get('forecast_frequency', '?')}' periods)</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -533,13 +543,22 @@ def main():
         with tab_data:
             st.subheader("📋 Pre-processed Datatable")
             st.write("Below is the aggregated timeline after cleansing and date parsing:")
-            
-            if forecast_data:
-                # Load forecast df for table
-                f_df_table = pd.DataFrame(forecast_data)
-                st.dataframe(f_df_table, use_container_width=True)
+
+            cleaned_data = res.get("cleaned_data", [])
+            if cleaned_data:
+                cleaned_df_table = pd.DataFrame(cleaned_data).rename(
+                    columns={"ds": "Date", "y": "Revenue"}
+                )
+                cleaned_df_table["Date"] = pd.to_datetime(cleaned_df_table["Date"]).dt.date
+                st.dataframe(cleaned_df_table, use_container_width=True)
             else:
-                st.warning("No data table available.")
+                st.warning("No cleaned data returned from backend API.")
+
+            st.markdown("#### 🔮 Forecast Table")
+            if forecast_data:
+                st.dataframe(pd.DataFrame(forecast_data), use_container_width=True)
+            else:
+                st.warning("No forecast table available.")
 
 
 if __name__ == "__main__":

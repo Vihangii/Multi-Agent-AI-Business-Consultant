@@ -7,6 +7,11 @@ import pandas as pd
 from prophet import Prophet
 
 
+# Supported Prophet frequency aliases and the ~6-month default horizon for each
+DEFAULT_PERIODS = {"D": 180, "W": 26, "MS": 6}
+SUPPORTED_FREQUENCIES = frozenset(DEFAULT_PERIODS)
+
+
 def prepare_prophet_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Prepare and validate data for Prophet.
@@ -49,45 +54,51 @@ def prepare_prophet_data(df: pd.DataFrame) -> pd.DataFrame:
 
 def forecast_revenue(
     df: pd.DataFrame,
-    periods: int = 180,
-    frequency: str = "D",
+    periods: int | None = None,
+    frequency: str | None = None,
 ) -> dict:
     """
     Generate a revenue forecast using Prophet.
 
     Args:
         df: Cleaned DataFrame with 'ds' and 'y' columns.
-        periods: Number of future periods to forecast (default: 180 days ≈ 6 months).
-        frequency: Frequency of predictions — 'D' (daily), 'W' (weekly), 'M' (monthly).
+        periods: Number of future periods to forecast. If None, a ~6-month
+            horizon is chosen based on the detected data granularity.
+        frequency: Frequency of predictions — 'D' (daily), 'W' (weekly),
+            'MS' (month start). If None, auto-detected from the data.
 
     Returns:
         Dictionary containing:
           - forecast_df: Full forecast DataFrame (historical + future).
           - summary: Key forecast metrics and insights.
+
+    Raises:
+        ValueError: If *frequency* is not one of the supported values.
     """
     # Prepare data
     prophet_df = prepare_prophet_data(df)
 
-    # Detect data frequency and adjust if needed
+    # Detect data granularity from the median gap between observations
     date_diffs = prophet_df["ds"].diff().dropna().dt.days
     median_diff = date_diffs.median()
 
-    # Auto-adjust frequency and periods based on data granularity
     if median_diff >= 25:
-        # Monthly data
-        frequency = "MS"
-        periods = 6
-        data_granularity = "monthly"
+        detected_freq, default_periods, data_granularity = "MS", 6, "monthly"
     elif median_diff >= 6:
-        # Weekly data
-        frequency = "W"
-        periods = 26
-        data_granularity = "weekly"
+        detected_freq, default_periods, data_granularity = "W", 26, "weekly"
     else:
-        # Daily data
-        frequency = "D"
-        periods = 180
-        data_granularity = "daily"
+        detected_freq, default_periods, data_granularity = "D", 180, "daily"
+
+    # Only fall back to auto-detected values when the caller did not specify
+    if frequency is None:
+        frequency = detected_freq
+    elif frequency not in SUPPORTED_FREQUENCIES:
+        raise ValueError(
+            f"Unsupported frequency '{frequency}'. "
+            f"Choose one of: {', '.join(sorted(SUPPORTED_FREQUENCIES))}."
+        )
+    if periods is None:
+        periods = default_periods if frequency == detected_freq else DEFAULT_PERIODS[frequency]
 
     # Configure and fit Prophet model
     model = Prophet(
@@ -119,6 +130,7 @@ def forecast_revenue(
 
     summary = {
         "data_granularity": data_granularity,
+        "forecast_frequency": frequency,
         "forecast_periods": periods,
         "last_actual_date": str(last_historical_date.date()),
         "last_actual_value": round(last_actual, 2),
