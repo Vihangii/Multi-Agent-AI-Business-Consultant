@@ -3,7 +3,6 @@ FastAPI Main Application Module
 Provides endpoints for the Multi-Agent AI Business Consultant Backend.
 """
 
-import io
 import logging
 from typing import Any, Dict
 
@@ -13,15 +12,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
-from backend.config import (
-    API_KEY,
-    CORS_ORIGINS,
-    MAX_UPLOAD_BYTES,
-    MAX_UPLOAD_MB,
-    OPENAI_MODEL,
-    has_openai_key,
-)
-from backend.agents.data_agent import find_date_column, find_revenue_column
+from backend.config import API_KEY, CORS_ORIGINS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, OPENAI_MODEL, has_openai_key
+from backend.io_utils import UploadError, inspect_dataframe, parse_upload
 from backend.orchestrator import run_pipeline
 
 # Configure Logging
@@ -72,47 +64,17 @@ async def require_api_key(provided: str | None = Security(_api_key_header)) -> N
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xls")
-
-
 async def _read_upload(file: UploadFile) -> pd.DataFrame:
     """Validate, size-check and parse an uploaded CSV/Excel file."""
-    filename = file.filename or ""
-    lower_filename = filename.lower()
-    if not lower_filename.endswith(_ALLOWED_EXTENSIONS):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file format. Please upload a .csv, .xlsx, or .xls file.",
-        )
-
+    # Read at most one byte over the limit so oversized files are rejected
+    # without buffering the whole thing.
     content = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum upload size is {MAX_UPLOAD_MB} MB.",
-        )
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty.",
-        )
-
-    def parse() -> pd.DataFrame:
-        if lower_filename.endswith(".csv"):
-            try:
-                return pd.read_csv(io.BytesIO(content), encoding="utf-8")
-            except UnicodeDecodeError:
-                return pd.read_csv(io.BytesIO(content), encoding="latin-1")
-        return pd.read_excel(io.BytesIO(content))
-
     try:
-        return await run_in_threadpool(parse)
-    except Exception as e:
-        logger.error("Failed to parse uploaded file: %s", str(e), exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not parse the uploaded file as a valid table. Error: {str(e)}",
-        )
+        return await run_in_threadpool(parse_upload, file.filename or "", content)
+    except UploadError as e:
+        if e.status_code == 422:
+            logger.error("Failed to parse uploaded file: %s", e)
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -156,14 +118,7 @@ async def inspect_dataset(
     or override the columns before running the full pipeline.
     """
     df = await _read_upload(file)
-    preview = df.head(5).astype(str).to_dict(orient="records")
-    return {
-        "columns": [str(c) for c in df.columns],
-        "row_count": int(len(df)),
-        "detected_date_column": find_date_column(df),
-        "detected_revenue_column": find_revenue_column(df),
-        "preview": preview,
-    }
+    return inspect_dataframe(df)
 
 
 @app.post("/analyze", tags=["Analysis"], dependencies=[Depends(require_api_key)])

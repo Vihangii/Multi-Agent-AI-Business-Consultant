@@ -27,7 +27,9 @@ def test_analyze_rejects_empty_file():
 
 
 def test_analyze_rejects_oversized_file(monkeypatch):
+    from backend import io_utils
     monkeypatch.setattr(main_module, "MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr(io_utils, "MAX_UPLOAD_BYTES", 10)
     r = client.post("/analyze", files={"file": ("data.csv", b"x" * 11, "text/csv")})
     assert r.status_code == 413
 

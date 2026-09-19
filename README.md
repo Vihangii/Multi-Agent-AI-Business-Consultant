@@ -1,13 +1,17 @@
 # Multi-Agent AI Business Consultant
 
 Upload a sales/revenue spreadsheet and get back a cleaned dataset, a Prophet
-revenue forecast, and a GPT-written strategic report — through a FastAPI backend
-and a Streamlit dashboard.
+revenue forecast, and a GPT-written strategic report.
 
 ```
 CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendation Agent ──▶ Dashboard
                 (pandas)        (Prophet)          (OpenAI)                (Streamlit)
 ```
+
+The Streamlit dashboard runs the agents **in-process by default** — one command
+starts the whole app. The same pipeline is also exposed as a FastAPI REST API
+for programmatic use, and the dashboard can be pointed at a remote API instead
+(sidebar → *Engine → Remote API server*).
 
 | Stage | Module | What it does |
 |---|---|---|
@@ -15,8 +19,9 @@ CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendati
 | 2. Forecast Agent | `backend/agents/forecast_agent.py` | Auto-detects daily / weekly / monthly granularity, fits Prophet, returns a ~6-month forecast with 95% intervals, and backtests itself on the last 20% of history (MAPE / MAE / coverage) |
 | 3. Recommendation Agent | `backend/agents/recommendation_agent.py` | Sends the stats + forecast to OpenAI and returns a markdown strategy report |
 | Orchestrator | `backend/orchestrator.py` | Runs the three stages and packages the result |
-| API | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
-| UI | `frontend/app.py` | Streamlit dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables |
+| Upload parsing | `backend/io_utils.py` | Shared CSV/Excel validation + parsing used by both the API and the dashboard |
+| API (optional) | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
+| UI | `frontend/app.py` | Streamlit dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables. Runs the pipeline in-process or via the API |
 
 ## Requirements
 
@@ -54,43 +59,50 @@ All settings live in `.env` (see `.env.example`):
 | `MAX_UPLOAD_MB` | `25` | Upload size limit |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `API_KEY` | – | When set, `/analyze` and `/inspect` require an `X-API-Key` header |
-| `BACKEND_URL` | `http://localhost:8000` | Where the Streamlit app finds the API |
+| `BACKEND_MODE` | `builtin` | Dashboard engine: `builtin` (in-process) or `remote` (call the API) |
+| `BACKEND_URL` | `http://localhost:8000` | Where the dashboard finds the API in `remote` mode |
 
 ## Run
 
-### With Docker (one command)
+### One command
+
+```powershell
+.\run.ps1                     # Windows: creates venv + .env if missing, opens the dashboard
+```
+
+```bash
+streamlit run frontend/app.py  # any OS, with the venv activated
+```
+
+Open http://localhost:8501, download the sample CSV from the sidebar (or upload
+your own), and click **Run Consultant Pipeline**. Nothing else needs to be
+running — the agents execute inside the Streamlit process.
+
+### With Docker
 
 ```bash
 cp .env.example .env        # set OPENAI_API_KEY if you have one
-docker compose up --build
+docker compose up --build   # dashboard on http://localhost:8501
 ```
 
-Backend on http://localhost:8000, dashboard on http://localhost:8501.
+### With the REST API as well
 
-### Locally — one command (Windows)
+Only needed if you want to call the pipeline from other programs, or run the
+dashboard and the compute on different machines.
 
 ```powershell
-.\run.ps1
+.\run.ps1 -WithApi            # Windows: API + dashboard (dashboard in remote mode)
 ```
-
-Creates the venv and `.env` if missing, then opens the backend and the
-dashboard in two windows. If port 8000 is busy it picks the next free one
-and points the dashboard at it.
-
-### Locally — manually
-
-Open two terminals (with the venv activated in each):
 
 ```bash
-# 1. Backend
-uvicorn backend.main:app --reload --port 8000
-
-# 2. Frontend
-streamlit run frontend/app.py
+uvicorn backend.main:app --reload --port 8000     # terminal 1
+BACKEND_MODE=remote streamlit run frontend/app.py # terminal 2
 ```
 
-Then open http://localhost:8501, download the sample CSV from the sidebar (or
-upload your own), and click **Run Consultant Pipeline**.
+```bash
+docker compose --profile api up   # Docker: adds the API on :8000
+```
+
 Interactive API docs are at http://localhost:8000/docs.
 
 ### Input data
@@ -149,7 +161,8 @@ builds the Docker image and smoke-tests the backend container.
 ```
 backend/
   config.py               settings from .env
-  main.py                 FastAPI app
+  io_utils.py             shared upload parsing
+  main.py                 FastAPI app (optional)
   orchestrator.py         pipeline runner
   agents/
     data_agent.py

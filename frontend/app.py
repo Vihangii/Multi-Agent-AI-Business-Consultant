@@ -1,6 +1,8 @@
 import io
 import logging
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -8,9 +10,22 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 
+# `streamlit run frontend/app.py` puts frontend/ on sys.path, not the project
+# root, so add the root explicitly to import the backend package in-process.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from backend.config import has_openai_key  # noqa: E402
+from backend.io_utils import UploadError, inspect_dataframe, parse_upload  # noqa: E402
+from backend.orchestrator import run_pipeline  # noqa: E402
+
 load_dotenv()
 DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 DEFAULT_API_KEY = os.getenv("API_KEY", "")
+# "builtin" runs the pipeline inside this process (single command, no API
+# server needed). "remote" calls a separately running FastAPI backend.
+DEFAULT_BACKEND_MODE = os.getenv("BACKEND_MODE", "builtin").strip().lower()
 
 # Configure page settings
 st.set_page_config(
@@ -134,7 +149,50 @@ def generate_sample_csv() -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# API Interactor
+# Built-in mode: run the backend pipeline directly in this process
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def inspect_builtin(file_bytes: bytes, file_name: str) -> dict | None:
+    """Parse the upload locally and report columns / detection. Cached per file."""
+    try:
+        return inspect_dataframe(parse_upload(file_name, file_bytes))
+    except UploadError as e:
+        st.sidebar.error(f"❌ {e}")
+        return None
+
+
+def analyze_builtin(
+    file_bytes: bytes,
+    file_name: str,
+    periods: int | None,
+    frequency: str | None,
+    skip_recommendations: bool,
+    date_column: str | None = None,
+    revenue_column: str | None = None,
+) -> dict | None:
+    """Run the orchestrator in-process; mirrors the /analyze endpoint's behaviour."""
+    try:
+        df = parse_upload(file_name, file_bytes)
+    except UploadError as e:
+        st.error(f"❌ {e}")
+        return None
+
+    result = run_pipeline(
+        df=df,
+        periods=periods,
+        frequency=frequency,
+        skip_recommendations=skip_recommendations,
+        date_column=date_column,
+        revenue_column=revenue_column,
+    )
+    if not result.success:
+        st.error(f"❌ Pipeline execution failed: {result.error}")
+        return None
+    return result.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Remote mode: call a separately running FastAPI backend
 # ---------------------------------------------------------------------------
 def _headers(api_key: str) -> dict:
     return {"X-API-Key": api_key} if api_key else {}
@@ -224,17 +282,34 @@ def main():
     st.sidebar.image("https://img.icons8.com/clouds/150/combo-chart.png", width=100)
     st.sidebar.header("🛠 Configuration")
 
-    backend_url = st.sidebar.text_input(
-        "API Backend URL",
-        value=DEFAULT_BACKEND_URL,
-        help="FastAPI backend host and port. Defaults to BACKEND_URL from .env.",
+    mode_labels = {"builtin": "Built-in (single process)", "remote": "Remote API server"}
+    mode_choice = st.sidebar.radio(
+        "Engine",
+        options=list(mode_labels.keys()),
+        format_func=mode_labels.get,
+        index=0 if DEFAULT_BACKEND_MODE != "remote" else 1,
+        horizontal=True,
+        help="Built-in runs the agents inside this app — nothing else to start. "
+             "Remote sends requests to a separately running FastAPI backend.",
     )
-    api_key = st.sidebar.text_input(
-        "API Key (if required)",
-        value=DEFAULT_API_KEY,
-        type="password",
-        help="Only needed when the backend has API_KEY set. Defaults to API_KEY from .env.",
-    )
+    remote = mode_choice == "remote"
+
+    backend_url = DEFAULT_BACKEND_URL
+    api_key = DEFAULT_API_KEY
+    if remote:
+        backend_url = st.sidebar.text_input(
+            "API Backend URL",
+            value=DEFAULT_BACKEND_URL,
+            help="FastAPI backend host and port. Defaults to BACKEND_URL from .env.",
+        )
+        api_key = st.sidebar.text_input(
+            "API Key (if required)",
+            value=DEFAULT_API_KEY,
+            type="password",
+            help="Only needed when the backend has API_KEY set. Defaults to API_KEY from .env.",
+        )
+    elif not has_openai_key():
+        st.sidebar.caption("ℹ️ No OPENAI_API_KEY in .env — AI recommendations will be unavailable.")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("📂 Upload Dataset")
@@ -261,7 +336,10 @@ def main():
     if uploaded_file is not None:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🧭 Columns")
-        info = call_inspect_api(backend_url, api_key, uploaded_file.getvalue(), uploaded_file.name)
+        if remote:
+            info = call_inspect_api(backend_url, api_key, uploaded_file.getvalue(), uploaded_file.name)
+        else:
+            info = inspect_builtin(uploaded_file.getvalue(), uploaded_file.name)
         if info and info.get("columns"):
             cols = info["columns"]
             auto = "Auto-detect"
@@ -363,17 +441,28 @@ def main():
                 st.session_state.raw_df = None
 
             # Call API
-            api_result = call_analyze_api(
-                backend_url=backend_url,
-                api_key=api_key,
-                file_bytes=file_bytes,
-                file_name=uploaded_file.name,
-                periods=forecast_periods,
-                frequency=frequency_override,
-                skip_recommendations=skip_recommendations,
-                date_column=date_column_override,
-                revenue_column=revenue_column_override,
-            )
+            if remote:
+                api_result = call_analyze_api(
+                    backend_url=backend_url,
+                    api_key=api_key,
+                    file_bytes=file_bytes,
+                    file_name=uploaded_file.name,
+                    periods=forecast_periods,
+                    frequency=frequency_override,
+                    skip_recommendations=skip_recommendations,
+                    date_column=date_column_override,
+                    revenue_column=revenue_column_override,
+                )
+            else:
+                api_result = analyze_builtin(
+                    file_bytes=file_bytes,
+                    file_name=uploaded_file.name,
+                    periods=forecast_periods,
+                    frequency=frequency_override,
+                    skip_recommendations=skip_recommendations,
+                    date_column=date_column_override,
+                    revenue_column=revenue_column_override,
+                )
 
             if api_result:
                 st.session_state.result = api_result
@@ -382,7 +471,7 @@ def main():
     # 2. Main View
     if st.session_state.result is None:
         # Welcome View
-        st.info("👈 Upload your business transactional data in the sidebar and click **Run Consultant Pipeline** to begin.")
+        st.info("👈 Upload your business transactional data in the sidebar (or download the sample CSV) and click **Run Consultant Pipeline** to begin.")
 
         # Explain the workflow
         col1, col2, col3 = st.columns(3)
