@@ -12,11 +12,11 @@ CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendati
 | Stage | Module | What it does |
 |---|---|---|
 | 1. Data Agent | `backend/agents/data_agent.py` | Detects the date and revenue columns, parses currency strings, aggregates duplicate dates, computes growth / monthly / volatility stats |
-| 2. Forecast Agent | `backend/agents/forecast_agent.py` | Auto-detects daily / weekly / monthly granularity, fits Prophet, returns a ~6-month forecast with 95% intervals |
+| 2. Forecast Agent | `backend/agents/forecast_agent.py` | Auto-detects daily / weekly / monthly granularity, fits Prophet, returns a ~6-month forecast with 95% intervals, and backtests itself on the last 20% of history (MAPE / MAE / coverage) |
 | 3. Recommendation Agent | `backend/agents/recommendation_agent.py` | Sends the stats + forecast to OpenAI and returns a markdown strategy report |
 | Orchestrator | `backend/orchestrator.py` | Runs the three stages and packages the result |
-| API | `backend/main.py` | `GET /`, `GET /health`, `POST /analyze` |
-| UI | `frontend/app.py` | Streamlit dashboard: KPIs, Plotly forecast chart, AI report, data tables |
+| API | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
+| UI | `frontend/app.py` | Streamlit dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables |
 
 ## Requirements
 
@@ -53,9 +53,31 @@ All settings live in `.env` (see `.env.example`):
 | `BACKEND_HOST` / `BACKEND_PORT` | `0.0.0.0` / `8000` | Where uvicorn listens |
 | `MAX_UPLOAD_MB` | `25` | Upload size limit |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
+| `API_KEY` | – | When set, `/analyze` and `/inspect` require an `X-API-Key` header |
 | `BACKEND_URL` | `http://localhost:8000` | Where the Streamlit app finds the API |
 
 ## Run
+
+### With Docker (one command)
+
+```bash
+cp .env.example .env        # set OPENAI_API_KEY if you have one
+docker compose up --build
+```
+
+Backend on http://localhost:8000, dashboard on http://localhost:8501.
+
+### Locally — one command (Windows)
+
+```powershell
+.\run.ps1
+```
+
+Creates the venv and `.env` if missing, then opens the backend and the
+dashboard in two windows. If port 8000 is busy it picks the next free one
+and points the dashboard at it.
+
+### Locally — manually
 
 Open two terminals (with the venv activated in each):
 
@@ -76,34 +98,51 @@ Interactive API docs are at http://localhost:8000/docs.
 Any CSV / `.xlsx` / `.xls` with at least one date-like column and one revenue-like
 column. Column names are matched by whole word (`Order Date`, `created_at`,
 `GrossRevenue`, `total_sales`, …); if nothing matches, the first parseable
-date column and the highest-variance numeric column are used. Currency
-symbols and thousands separators are stripped automatically. At least 10
-valid rows are required for forecasting.
+date column and the highest-variance numeric column are used. The sidebar
+shows what was detected and lets you override it. Currency symbols and
+thousands separators are stripped automatically. At least 10 valid rows are
+required for forecasting.
 
 ### API
 
 ```bash
+# What would be detected? (columns, preview)
+curl -F "file=@sales.csv" http://localhost:8000/inspect
+
+# Run the pipeline
 curl -F "file=@sales.csv" "http://localhost:8000/analyze?periods=90&frequency=D&skip_recommendations=true"
+
+# With explicit columns and an API key
+curl -H "X-API-Key: $API_KEY" -F "file=@sales.csv" \
+  "http://localhost:8000/analyze?date_column=OrderDate&revenue_column=Total"
 ```
 
-Query parameters:
+`/analyze` query parameters:
 
 - `periods` — forecast horizon (2–1000). Default ≈ 6 months for the detected frequency.
 - `frequency` — `D`, `W` or `MS`. Auto-detected if omitted.
 - `skip_recommendations` — `true` to skip the OpenAI stage.
+- `date_column`, `revenue_column` — override auto-detection.
 
-The response contains `analysis`, `forecast_summary`, `forecast`, `cleaned_data`,
-and either `recommendations` (markdown) or `recommendations_error` if stage 3
-could not run. Stage 3 failing never fails the request; stages 1–2 results are
-always returned.
+The response contains `columns`, `analysis`, `forecast_summary` (including an
+`accuracy` block with backtest MAPE / MAE / interval coverage when there is
+enough history), `forecast`, `cleaned_data`, and either `recommendations`
+(markdown) or `recommendations_error` if stage 3 could not run. Stage 3
+failing never fails the request; stages 1–2 results are always returned.
+
+Both upload endpoints reject files over `MAX_UPLOAD_MB` (413) and, when
+`API_KEY` is set, requests without a matching `X-API-Key` header (401).
 
 ## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                 # full suite (~20 s, fits a few Prophet models)
+pytest                 # full suite (~1 min, fits several Prophet models)
 pytest -m "not slow"   # fast unit tests only
 ```
+
+CI (`.github/workflows/ci.yml`) runs the suite on every push and PR, then
+builds the Docker image and smoke-tests the backend container.
 
 ## Project layout
 
@@ -119,4 +158,6 @@ backend/
 frontend/
   app.py                  Streamlit dashboard
 tests/
+Dockerfile, docker-compose.yml
+.github/workflows/ci.yml
 ```

@@ -61,6 +61,7 @@ def forecast_revenue(
     df: pd.DataFrame,
     periods: int | None = None,
     frequency: str | None = None,
+    backtest: bool = True,
 ) -> dict:
     """
     Generate a revenue forecast using Prophet.
@@ -71,11 +72,14 @@ def forecast_revenue(
             horizon is chosen based on the detected data granularity.
         frequency: Frequency of predictions — 'D' (daily), 'W' (weekly),
             'MS' (month start). If None, auto-detected from the data.
+        backtest: If True, also fit on the first ~80% of the history and
+            score the model on the held-out tail (MAPE / MAE / coverage).
 
     Returns:
         Dictionary containing:
           - forecast_df: Full forecast DataFrame (historical + future).
-          - summary: Key forecast metrics and insights.
+          - summary: Key forecast metrics and insights, including an
+            ``accuracy`` block when backtesting ran.
 
     Raises:
         ValueError: If *frequency* is not one of the supported values.
@@ -106,18 +110,7 @@ def forecast_revenue(
         periods = default_periods if frequency == detected_freq else DEFAULT_PERIODS[frequency]
 
     # Configure and fit Prophet model
-    span_days = (prophet_df["ds"].max() - prophet_df["ds"].min()).days
-    model = Prophet(
-        yearly_seasonality=(span_days >= 365),
-        weekly_seasonality=(data_granularity == "daily"),
-        daily_seasonality=False,
-        changepoint_prior_scale=0.05,
-        seasonality_mode="multiplicative",
-        interval_width=0.95,
-    )
-
-    # Suppress Prophet's verbose logging
-    model.fit(prophet_df)
+    model = _fit_model(prophet_df, data_granularity)
 
     # Create future dates DataFrame
     future = model.make_future_dataframe(periods=periods, freq=frequency)
@@ -155,6 +148,11 @@ def forecast_revenue(
         ),
     }
 
+    if backtest:
+        accuracy = _backtest(prophet_df, data_granularity)
+        if accuracy is not None:
+            summary["accuracy"] = accuracy
+
     # Build a simplified forecast DataFrame for plotting
     forecast_result = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
     forecast_result = forecast_result.rename(columns={
@@ -189,3 +187,76 @@ def _trend_label(growth_percent: float | None) -> str:
     if growth_percent < 0:
         return "downward"
     return "flat"
+
+
+def _fit_model(prophet_df: pd.DataFrame, data_granularity: str) -> Prophet:
+    """Build and fit a Prophet model with settings appropriate to the data."""
+    span_days = (prophet_df["ds"].max() - prophet_df["ds"].min()).days
+    model = Prophet(
+        yearly_seasonality=(span_days >= 365),
+        weekly_seasonality=(data_granularity == "daily"),
+        daily_seasonality=False,
+        changepoint_prior_scale=0.05,
+        seasonality_mode="multiplicative",
+        interval_width=0.95,
+    )
+    model.fit(prophet_df)
+    return model
+
+
+# Fraction of history held out for the backtest, and the minimum train size
+BACKTEST_HOLDOUT = 0.2
+BACKTEST_MIN_TRAIN = MIN_DATA_POINTS
+
+
+def _backtest(prophet_df: pd.DataFrame, data_granularity: str) -> dict | None:
+    """
+    Fit on the first (1 - BACKTEST_HOLDOUT) of the history and score the
+    prediction on the held-out tail.
+
+    Returns None when there is not enough data to hold anything out.
+    """
+    n = len(prophet_df)
+    n_test = max(1, int(n * BACKTEST_HOLDOUT))
+    n_train = n - n_test
+    if n_train < BACKTEST_MIN_TRAIN:
+        return None
+
+    train = prophet_df.iloc[:n_train]
+    test = prophet_df.iloc[n_train:]
+
+    model = _fit_model(train, data_granularity)
+    pred = model.predict(test[["ds"]])
+
+    actual = test["y"].to_numpy(dtype=float)
+    yhat = pred["yhat"].to_numpy(dtype=float)
+    lower = pred["yhat_lower"].to_numpy(dtype=float)
+    upper = pred["yhat_upper"].to_numpy(dtype=float)
+
+    abs_err = abs(actual - yhat)
+    nonzero = actual != 0
+    mape = float((abs_err[nonzero] / actual[nonzero]).mean() * 100) if nonzero.any() else None
+    coverage = float(((actual >= lower) & (actual <= upper)).mean() * 100)
+
+    return {
+        "holdout_points": int(n_test),
+        "holdout_start": str(test["ds"].iloc[0].date()),
+        "holdout_end": str(test["ds"].iloc[-1].date()),
+        "mae": round(float(abs_err.mean()), 2),
+        "mape_percent": round(mape, 2) if mape is not None else None,
+        "interval_coverage_percent": round(coverage, 2),
+        "rating": _accuracy_rating(mape),
+    }
+
+
+def _accuracy_rating(mape: float | None) -> str:
+    """Plain-language label for a MAPE value (common forecasting rule of thumb)."""
+    if mape is None:
+        return "unknown"
+    if mape < 10:
+        return "excellent"
+    if mape < 20:
+        return "good"
+    if mape < 50:
+        return "fair"
+    return "poor"

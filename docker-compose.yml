@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: .
+    image: ai-business-consultant
+    env_file: .env
+    environment:
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    image: ai-business-consultant
+    env_file: .env
+    environment:
+      # Inside the compose network the backend is reachable by service name
+      BACKEND_URL: http://backend:8000
+    command: ["streamlit", "run", "frontend/app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy

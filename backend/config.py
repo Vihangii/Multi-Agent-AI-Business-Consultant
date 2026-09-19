@@ -43,3 +43,7 @@ def require_openai_key() -> str:
             "or run with skip_recommendations=True."
         )
     return OPENAI_API_KEY
+
+# Optional shared secret. When set, /analyze and /inspect require an
+# X-API-Key header with this value. Leave unset for open local development.
+API_KEY = os.getenv("API_KEY") or None

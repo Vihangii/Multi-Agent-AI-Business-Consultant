@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+DEFAULT_API_KEY = os.getenv("API_KEY", "")
 
 # Configure page settings
 st.set_page_config(
@@ -30,11 +31,11 @@ st.markdown(
     <style>
         /* Base styles */
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
-        
+
         html, body, [class*="css"] {
             font-family: 'Outfit', sans-serif;
         }
-        
+
         /* Main header gradient */
         .main-header {
             background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #60a5fa 100%);
@@ -51,7 +52,7 @@ st.markdown(
             margin-bottom: 2rem;
             font-weight: 300;
         }
-        
+
         /* Card component styling */
         .metric-card {
             background: rgba(255, 255, 255, 0.08);
@@ -90,7 +91,7 @@ st.markdown(
             font-size: 0.8rem;
             color: #64748b;
         }
-        
+
         /* Sidebar styling override */
         .css-1d391kg {
             background-color: #0f172a;
@@ -108,25 +109,25 @@ st.markdown(
 def generate_sample_csv() -> bytes:
     """Generate a clean synthetic daily revenue CSV file for testing."""
     import numpy as np
-    
+
     dates = pd.date_range(start="2024-01-01", end="2026-06-30", freq="D")
     n = len(dates)
-    
+
     # Generate realistic revenue: Trend + Seasonality + Noise
     trend = np.linspace(500, 1200, n)
     weekly_seasonality = 150 * np.sin(2 * np.pi * dates.dayofweek / 7.0)
     yearly_seasonality = 300 * np.sin(2 * np.pi * dates.dayofyear / 365.25)
     rng = np.random.default_rng(42)  # fixed seed so the sample is reproducible
     noise = rng.normal(0, 100, n)
-    
+
     revenue = trend + weekly_seasonality + yearly_seasonality + noise
     revenue = np.clip(revenue, 100, None)  # Ensure no negative revenue
-    
+
     sample_df = pd.DataFrame({
         "TransactionDate": dates.strftime("%Y-%m-%d"),
         "GrossRevenue": np.round(revenue, 2),
     })
-    
+
     output = io.StringIO()
     sample_df.to_csv(output, index=False)
     return output.getvalue().encode("utf-8")
@@ -135,26 +136,62 @@ def generate_sample_csv() -> bytes:
 # ---------------------------------------------------------------------------
 # API Interactor
 # ---------------------------------------------------------------------------
+def _headers(api_key: str) -> dict:
+    return {"X-API-Key": api_key} if api_key else {}
+
+
+def _files(file_name: str, file_bytes: bytes) -> dict:
+    mime = "text/csv" if file_name.lower().endswith(".csv") else "application/octet-stream"
+    return {"file": (file_name, file_bytes, mime)}
+
+
+@st.cache_data(show_spinner=False)
+def call_inspect_api(backend_url: str, api_key: str, file_bytes: bytes, file_name: str) -> dict | None:
+    """Call /inspect to get column names and auto-detection hints. Cached per file."""
+    endpoint = f"{backend_url.rstrip('/')}/inspect"
+    try:
+        response = requests.post(
+            endpoint, files=_files(file_name, file_bytes), headers=_headers(api_key), timeout=60
+        )
+        if response.status_code == 200:
+            return response.json()
+        logger.warning("Inspect failed (%s): %s", response.status_code, response.text)
+    except Exception as e:  # inspection is best-effort; the pipeline can still auto-detect
+        logger.warning("Inspect unavailable: %s", e)
+    return None
+
+
 def call_analyze_api(
     backend_url: str,
+    api_key: str,
     file_bytes: bytes,
     file_name: str,
     periods: int | None,
     frequency: str | None,
     skip_recommendations: bool,
+    date_column: str | None = None,
+    revenue_column: str | None = None,
 ) -> dict | None:
     """Call the FastAPI backend's /analyze endpoint."""
     endpoint = f"{backend_url.rstrip('/')}/analyze"
-    mime = "text/csv" if file_name.lower().endswith(".csv") else "application/octet-stream"
-    files = {"file": (file_name, file_bytes, mime)}
     params = {"skip_recommendations": skip_recommendations}
     if periods is not None:
         params["periods"] = periods
     if frequency:
         params["frequency"] = frequency
-        
+    if date_column:
+        params["date_column"] = date_column
+    if revenue_column:
+        params["revenue_column"] = revenue_column
+
     try:
-        response = requests.post(endpoint, files=files, params=params, timeout=300)
+        response = requests.post(
+            endpoint,
+            files=_files(file_name, file_bytes),
+            params=params,
+            headers=_headers(api_key),
+            timeout=300,
+        )
         if response.status_code == 200:
             return response.json()
         else:
@@ -186,22 +223,28 @@ def main():
     # 1. Sidebar - Configuration & Inputs
     st.sidebar.image("https://img.icons8.com/clouds/150/combo-chart.png", width=100)
     st.sidebar.header("🛠 Configuration")
-    
+
     backend_url = st.sidebar.text_input(
         "API Backend URL",
         value=DEFAULT_BACKEND_URL,
         help="FastAPI backend host and port. Defaults to BACKEND_URL from .env.",
     )
-    
+    api_key = st.sidebar.text_input(
+        "API Key (if required)",
+        value=DEFAULT_API_KEY,
+        type="password",
+        help="Only needed when the backend has API_KEY set. Defaults to API_KEY from .env.",
+    )
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("📂 Upload Dataset")
-    
+
     uploaded_file = st.sidebar.file_uploader(
         "Choose CSV/Excel File",
         type=["csv", "xlsx", "xls"],
         help="Upload sales or revenue transactions containing date and revenue columns.",
     )
-    
+
     # Sample file download button
     sample_bytes = generate_sample_csv()
     st.sidebar.download_button(
@@ -211,10 +254,42 @@ def main():
         mime="text/csv",
         help="Download an artificial daily sales dataset to try out the consultant instantly.",
     )
-    
+
+    # Column selection: inspect the file so the user can confirm/override detection
+    date_column_override: str | None = None
+    revenue_column_override: str | None = None
+    if uploaded_file is not None:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🧭 Columns")
+        info = call_inspect_api(backend_url, api_key, uploaded_file.getvalue(), uploaded_file.name)
+        if info and info.get("columns"):
+            cols = info["columns"]
+            auto = "Auto-detect"
+            d_default = info.get("detected_date_column")
+            r_default = info.get("detected_revenue_column")
+            date_choice = st.sidebar.selectbox(
+                "Date column",
+                options=[auto] + cols,
+                index=(cols.index(d_default) + 1) if d_default in cols else 0,
+                help="Auto-detected value is preselected; change it if it's wrong.",
+            )
+            revenue_choice = st.sidebar.selectbox(
+                "Revenue column",
+                options=[auto] + cols,
+                index=(cols.index(r_default) + 1) if r_default in cols else 0,
+            )
+            date_column_override = None if date_choice == auto else date_choice
+            revenue_column_override = None if revenue_choice == auto else revenue_choice
+            if d_default is None or r_default is None:
+                st.sidebar.warning("Could not auto-detect both columns — please pick them above.")
+            with st.sidebar.expander("Preview (first 5 rows)"):
+                st.dataframe(pd.DataFrame(info.get("preview", [])), use_container_width=True, hide_index=True)
+        else:
+            st.sidebar.caption("Columns will be auto-detected when the pipeline runs.")
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔮 Forecasting Options")
-    
+
     freq_options = {
         "Auto-detect": None,
         "Daily ('D')": "D",
@@ -247,16 +322,16 @@ def main():
             step=step,
             help=f"Number of future {selected_freq_label.split(' ')[0].lower()} periods to forecast.",
         )
-    
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("🤖 AI Consult Strategy")
-    
+
     skip_recommendations = st.sidebar.checkbox(
         "Skip AI Recommendations",
         value=False,
         help="Enable this to bypass Stage 3 (OpenAI recommendations) for offline testing.",
     )
-    
+
     # Process File button
     analyze_triggered = st.sidebar.button(
         "🚀 Run Consultant Pipeline",
@@ -264,20 +339,20 @@ def main():
         disabled=(uploaded_file is None),
         use_container_width=True,
     )
-    
+
     # Initialize session state storage
     if "result" not in st.session_state:
         st.session_state.result = None
     if "raw_df" not in st.session_state:
         st.session_state.raw_df = None
-        
+
     # Trigger analysis on click
     if analyze_triggered and uploaded_file is not None:
         with st.spinner("⚡ Running Multi-Agent Consulting Pipeline... Please wait."):
             # Load raw data locally for local reference/plotting
             file_bytes = uploaded_file.read()
             uploaded_file.seek(0)
-            
+
             try:
                 if uploaded_file.name.endswith(".csv"):
                     st.session_state.raw_df = pd.read_csv(io.BytesIO(file_bytes))
@@ -286,26 +361,29 @@ def main():
             except Exception as e:
                 st.error(f"Could not read the file locally: {e}")
                 st.session_state.raw_df = None
-                
+
             # Call API
             api_result = call_analyze_api(
                 backend_url=backend_url,
+                api_key=api_key,
                 file_bytes=file_bytes,
                 file_name=uploaded_file.name,
                 periods=forecast_periods,
                 frequency=frequency_override,
                 skip_recommendations=skip_recommendations,
+                date_column=date_column_override,
+                revenue_column=revenue_column_override,
             )
-            
+
             if api_result:
                 st.session_state.result = api_result
                 st.toast("🎉 Pipeline finished successfully!", icon="✅")
-                
+
     # 2. Main View
     if st.session_state.result is None:
         # Welcome View
         st.info("👈 Upload your business transactional data in the sidebar and click **Run Consultant Pipeline** to begin.")
-        
+
         # Explain the workflow
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -341,7 +419,7 @@ def main():
         analysis = res.get("analysis", {})
         forecast_sum = res.get("forecast_summary", {})
         forecast_data = res.get("forecast", [])
-        
+
         # Build Tabs
         tab_dash, tab_chart, tab_ai, tab_data = st.tabs([
             "📊 Executive Dashboard",
@@ -349,14 +427,14 @@ def main():
             "🚀 Strategic AI Report",
             "📋 View Cleaned Data",
         ])
-        
+
         # --- TAB 1: EXECUTIVE DASHBOARD ---
         with tab_dash:
             st.subheader("📌 Key Performance Indicators")
-            
+
             # Metric Columns
             mc1, mc2, mc3, mc4 = st.columns(4)
-            
+
             # Total Revenue
             total_rev = analysis.get("revenue", {}).get("total", 0)
             mc1.markdown(
@@ -369,7 +447,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-            
+
             # Avg Performance
             avg_val = analysis.get("monthly", {}).get("avg_monthly_revenue", 0)
             val_lbl = "Avg Monthly"
@@ -386,7 +464,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-            
+
             # Growth direction
             growth_pct = analysis.get("growth", {}).get("overall_percent")
             growth_dir = analysis.get("growth", {}).get("direction", "n/a").upper()
@@ -402,7 +480,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-            
+
             # Forecast Outlook
             f_growth = forecast_sum.get("predicted_growth_percent")
             f_trend = forecast_sum.get("forecast_trend", "n/a").upper()
@@ -418,7 +496,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-            
+
             # Metadata & Data Agent summary
             st.markdown("### 🔍 Data Processing & Detection Details")
             c1, c2 = st.columns(2)
@@ -430,7 +508,7 @@ def main():
                 st.write(f"**Date Range:** {analysis.get('date_range', {}).get('start')} to {analysis.get('date_range', {}).get('end')} ({analysis.get('date_range', {}).get('span_days')} days)")
                 st.write(f"**Active Records (Filtered & Cleaned):** `{res.get('cleaned_row_count')}` rows")
                 st.write(f"**Granularity (Detected by Forecast):** `{forecast_sum.get('data_granularity')}`")
-                
+
             # Monthly Breakdown
             if "monthly" in analysis:
                 st.markdown("### 📆 Monthly Records Breakdown")
@@ -438,24 +516,24 @@ def main():
                 bc1, bc2 = st.columns(2)
                 bc1.info(f"🏆 **Best Month:** {mon.get('best_month')} (${mon.get('best_month_revenue', 0):,.2f})")
                 bc2.warning(f"📉 **Worst Month:** {mon.get('worst_month')} (${mon.get('worst_month_revenue', 0):,.2f})")
-                
+
         # --- TAB 2: REVENUE FORECAST CHARTS ---
         with tab_chart:
             st.subheader("📈 Revenue Projections (Prophet Forecasting)")
-            
+
             if forecast_data:
                 # Load forecast df
                 f_df = pd.DataFrame(forecast_data)
                 f_df["ds"] = pd.to_datetime(f_df["ds"])
-                
+
                 # Fetch actual data locally if available
                 raw_df_local = st.session_state.raw_df
                 date_col_api = res.get("date_column")
                 rev_col_api = res.get("revenue_column")
-                
+
                 # Initialize Plotly figure
                 fig = go.Figure()
-                
+
                 # Plot confidence interval shaded area first
                 fig.add_trace(
                     go.Scatter(
@@ -469,7 +547,7 @@ def main():
                         name="95% Confidence Interval",
                     )
                 )
-                
+
                 # Plot predicted model line
                 fig.add_trace(
                     go.Scatter(
@@ -479,7 +557,7 @@ def main():
                         name="Forecasted Trend",
                     )
                 )
-                
+
                 # Overlay actual raw records if successfully read
                 if raw_df_local is not None and date_col_api in raw_df_local.columns and rev_col_api in raw_df_local.columns:
                     try:
@@ -491,7 +569,7 @@ def main():
                             errors="coerce"
                         )
                         raw_plot_df = raw_plot_df.dropna().sort_values("ds")
-                        
+
                         fig.add_trace(
                             go.Scatter(
                                 x=raw_plot_df["ds"],
@@ -503,7 +581,7 @@ def main():
                         )
                     except Exception as e:
                         logger.warning("Could not overlay actual data on plot: %s", e)
-                        
+
                 # Update layout aesthetics
                 fig.update_layout(
                     title="Actual Revenue vs Model Predictions",
@@ -515,27 +593,47 @@ def main():
                     margin=dict(l=20, r=20, t=60, b=20),
                     height=550,
                 )
-                
+
                 st.plotly_chart(fig, use_container_width=True)
-                
+
                 # Forecast metrics summary
                 st.markdown("#### 🔮 Forecast Metrics & Peak Values")
                 f1, f2, f3 = st.columns(3)
                 f1.metric("Peak Forecasted Value", f"${forecast_sum.get('peak_forecasted_value', 0):,.2f}")
                 f2.metric("Peak Forecast Date", str(forecast_sum.get("peak_forecasted_date")))
                 f3.metric("Forecast Horizon End Value", f"${forecast_sum.get('forecast_end_value', 0):,.2f}")
+
+                # Backtest accuracy
+                acc = forecast_sum.get("accuracy")
+                if acc:
+                    st.markdown("#### 🎯 Model Accuracy (backtest)")
+                    st.caption(
+                        f"The model was re-fit on the history before {acc.get('holdout_start')} and scored "
+                        f"against the {acc.get('holdout_points')} actual points from "
+                        f"{acc.get('holdout_start')} to {acc.get('holdout_end')}."
+                    )
+                    a1, a2, a3, a4 = st.columns(4)
+                    mape = acc.get("mape_percent")
+                    a1.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, (int, float)) else "n/a",
+                              help="Mean absolute percentage error — lower is better.")
+                    a2.metric("MAE", f"${acc.get('mae', 0):,.2f}", help="Mean absolute error in revenue units.")
+                    a3.metric("95% Interval Coverage", f"{acc.get('interval_coverage_percent', 0):.0f}%",
+                              help="Share of held-out actuals that fell inside the predicted interval. Ideal ≈ 95%.")
+                    a4.metric("Rating", str(acc.get("rating", "unknown")).title())
+                else:
+                    st.caption("Not enough history to run a backtest; accuracy metrics unavailable.")
             else:
                 st.warning("No forecast dataset returned from backend API.")
-                
+
         # --- TAB 3: STRATEGIC AI REPORT ---
         with tab_ai:
             st.subheader("🚀 Strategic Consultation Recommendations")
-            
+
             recommendations_md = res.get("recommendations")
-            
+
             if recommendations_md:
                 st.markdown(recommendations_md)
-                
+
                 # Add download report button
                 st.download_button(
                     label="📥 Export Report as Markdown",
@@ -551,7 +649,7 @@ def main():
                 st.warning("AI Consultation recommendations were skipped. Toggle off 'Skip AI Recommendations' in the sidebar options to generate them.")
             else:
                 st.error("No consultation report returned from the Recommendation Agent.")
-                
+
         # --- TAB 4: VIEW CLEANED DATA ---
         with tab_data:
             st.subheader("📋 Pre-processed Datatable")
