@@ -11,6 +11,10 @@ from prophet import Prophet
 DEFAULT_PERIODS = {"D": 180, "W": 26, "MS": 6}
 SUPPORTED_FREQUENCIES = frozenset(DEFAULT_PERIODS)
 
+# Prophet technically fits on 2 points, but anything under ~10 produces
+# meaningless trends and often fails inside the optimiser.
+MIN_DATA_POINTS = 10
+
 
 def prepare_prophet_data(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -30,7 +34,7 @@ def prepare_prophet_data(df: pd.DataFrame) -> pd.DataFrame:
         Prophet-ready DataFrame.
 
     Raises:
-        ValueError: If data has fewer than 2 rows after preparation.
+        ValueError: If data has fewer than MIN_DATA_POINTS rows after preparation.
     """
     prophet_df = df[["ds", "y"]].copy()
 
@@ -44,9 +48,10 @@ def prepare_prophet_data(df: pd.DataFrame) -> pd.DataFrame:
     # Sort chronologically
     prophet_df = prophet_df.sort_values("ds").reset_index(drop=True)
 
-    if len(prophet_df) < 2:
+    if len(prophet_df) < MIN_DATA_POINTS:
         raise ValueError(
-            f"Not enough data for forecasting. Got {len(prophet_df)} rows, need at least 2."
+            f"Not enough data for forecasting. Got {len(prophet_df)} rows, "
+            f"need at least {MIN_DATA_POINTS}."
         )
 
     return prophet_df
@@ -101,8 +106,9 @@ def forecast_revenue(
         periods = default_periods if frequency == detected_freq else DEFAULT_PERIODS[frequency]
 
     # Configure and fit Prophet model
+    span_days = (prophet_df["ds"].max() - prophet_df["ds"].min()).days
     model = Prophet(
-        yearly_seasonality=True,
+        yearly_seasonality=(span_days >= 365),
         weekly_seasonality=(data_granularity == "daily"),
         daily_seasonality=False,
         changepoint_prior_scale=0.05,
@@ -126,7 +132,7 @@ def forecast_revenue(
     # Build summary
     last_actual = float(prophet_df["y"].iloc[-1])
     final_predicted = float(future_forecast["yhat"].iloc[-1])
-    predicted_growth = ((final_predicted - last_actual) / last_actual) * 100
+    predicted_growth = _safe_growth_percent(last_actual, final_predicted)
 
     summary = {
         "data_granularity": data_granularity,
@@ -136,8 +142,8 @@ def forecast_revenue(
         "last_actual_value": round(last_actual, 2),
         "forecast_end_date": str(future_forecast["ds"].iloc[-1].date()),
         "forecast_end_value": round(final_predicted, 2),
-        "predicted_growth_percent": round(predicted_growth, 2),
-        "forecast_trend": "upward" if predicted_growth > 0 else "downward",
+        "predicted_growth_percent": predicted_growth,
+        "forecast_trend": _trend_label(predicted_growth),
         "confidence_interval": {
             "lower": round(float(future_forecast["yhat_lower"].iloc[-1]), 2),
             "upper": round(float(future_forecast["yhat_upper"].iloc[-1]), 2),
@@ -161,3 +167,25 @@ def forecast_revenue(
         "forecast_df": forecast_result,
         "summary": summary,
     }
+
+
+def _safe_growth_percent(baseline: float, final: float) -> float | None:
+    """
+    Percentage change from *baseline* to *final*.
+
+    Returns None (JSON null) instead of inf/nan when the baseline is zero,
+    which is a legal value since cleaning keeps y >= 0.
+    """
+    if baseline == 0 or baseline != baseline:  # zero or NaN
+        return None
+    return round(((final - baseline) / baseline) * 100, 2)
+
+
+def _trend_label(growth_percent: float | None) -> str:
+    if growth_percent is None:
+        return "undetermined"
+    if growth_percent > 0:
+        return "upward"
+    if growth_percent < 0:
+        return "downward"
+    return "flat"

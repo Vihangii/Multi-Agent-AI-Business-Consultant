@@ -3,6 +3,8 @@ Data Analysis Agent
 Handles data loading, cleaning, column detection, and statistical analysis.
 """
 
+import re
+
 import pandas as pd
 import numpy as np
 
@@ -22,6 +24,38 @@ REVENUE_ALIASES = [
 ]
 
 
+def _tokens(name: str) -> list[str]:
+    """Split a column name into lowercase word tokens: 'OrderDate' -> ['order', 'date']."""
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(name))  # camelCase -> camel Case
+    return [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
+
+
+def _match_by_alias(df: pd.DataFrame, aliases: list[str]) -> str | None:
+    """
+    Find the column that best matches the alias list.
+
+    Aliases are ordered strongest-first, so the first alias that matches any
+    column wins. For each alias a whole-name match ('Revenue') is preferred
+    over a whole-word match ('revenue_usd'). Matching is on word tokens, so
+    'holiday' does not match 'day' and 'lifetime_value' does not match 'time'.
+    """
+    tokenised = {col: _tokens(col) for col in df.columns}
+
+    for alias in aliases:
+        alias_tokens = alias.split("_")
+
+        for col, toks in tokenised.items():
+            if toks == alias_tokens:
+                return col
+
+        for col, toks in tokenised.items():
+            # alias tokens must appear as a contiguous run of whole tokens
+            for i in range(len(toks) - len(alias_tokens) + 1):
+                if toks[i:i + len(alias_tokens)] == alias_tokens:
+                    return col
+    return None
+
+
 def find_date_column(df: pd.DataFrame) -> str | None:
     """
     Detect the date/time column in the DataFrame.
@@ -36,21 +70,15 @@ def find_date_column(df: pd.DataFrame) -> str | None:
     Returns:
         Column name if found, otherwise None.
     """
-    columns_lower = {col.lower().strip(): col for col in df.columns}
+    # Strategy 1 & 2: whole-name, then whole-word alias match
+    match = _match_by_alias(df, DATE_ALIASES)
+    if match is not None:
+        return match
 
-    # Strategy 1: Match against known aliases
-    for alias in DATE_ALIASES:
-        if alias in columns_lower:
-            return columns_lower[alias]
-
-    # Strategy 2: Partial match (column name contains a date keyword)
-    for alias in DATE_ALIASES:
-        for col_lower, col_original in columns_lower.items():
-            if alias in col_lower:
-                return col_original
-
-    # Strategy 3: Try parsing each column as datetime
+    # Strategy 3: Try parsing each non-numeric column as datetime
     for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue  # plain numbers (e.g. 2024) would parse as epoch timestamps
         try:
             parsed = pd.to_datetime(df[col], errors="coerce")
             if parsed.notna().sum() > len(df) * 0.5:
@@ -75,18 +103,10 @@ def find_revenue_column(df: pd.DataFrame) -> str | None:
     Returns:
         Column name if found, otherwise None.
     """
-    columns_lower = {col.lower().strip(): col for col in df.columns}
-
-    # Strategy 1: Exact match against known aliases
-    for alias in REVENUE_ALIASES:
-        if alias in columns_lower:
-            return columns_lower[alias]
-
-    # Strategy 2: Partial match
-    for alias in REVENUE_ALIASES:
-        for col_lower, col_original in columns_lower.items():
-            if alias in col_lower:
-                return col_original
+    # Strategy 1 & 2: whole-name, then whole-word alias match
+    match = _match_by_alias(df, REVENUE_ALIASES)
+    if match is not None:
+        return match
 
     # Strategy 3: Pick the numeric column with the highest standard deviation
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -198,7 +218,11 @@ def analyze_data(df: pd.DataFrame) -> dict:
             overall_growth = ((last_value - first_value) / first_value) * 100
             stats["growth"] = {
                 "overall_percent": round(float(overall_growth), 2),
-                "direction": "increasing" if overall_growth > 0 else "decreasing",
+                "direction": (
+                    "increasing" if overall_growth > 0
+                    else "decreasing" if overall_growth < 0
+                    else "flat"
+                ),
             }
 
     # --- Monthly Aggregation ---
@@ -214,9 +238,11 @@ def analyze_data(df: pd.DataFrame) -> dict:
         "avg_monthly_revenue": round(float(monthly_stats.mean()), 2),
     }
 
-    # --- Volatility ---
-    if len(monthly_stats) >= 2:
-        monthly_changes = monthly_stats.pct_change().dropna()
+    # --- Volatility --- (a zero-revenue month yields inf in pct_change; drop it)
+    monthly_changes = (
+        monthly_stats.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    )
+    if not monthly_changes.empty:
         stats["volatility"] = {
             "avg_monthly_change_percent": round(float(monthly_changes.mean() * 100), 2),
             "max_monthly_drop_percent": round(float(monthly_changes.min() * 100), 2),

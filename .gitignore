@@ -36,3 +36,8 @@ Thumbs.db
 
 # === Logs ===
 *.log
+
+# === Test / tooling ===
+.pytest_cache/
+.coverage
+htmlcov/

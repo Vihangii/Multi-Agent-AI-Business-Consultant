@@ -17,7 +17,10 @@ from backend.agents.data_agent import (
     find_revenue_column,
 )
 from backend.agents.forecast_agent import forecast_revenue
-from backend.agents.recommendation_agent import generate_recommendations
+from backend.agents.recommendation_agent import (
+    RecommendationError,
+    generate_recommendations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,7 @@ class PipelineResult:
 
         # Stage 3: Recommendation Agent outputs
         self.recommendations: str | None = None
+        self.recommendations_error: str | None = None
 
         # Metadata
         self.elapsed_seconds: float = 0.0
@@ -73,6 +77,8 @@ class PipelineResult:
 
         if self.recommendations is not None:
             result["recommendations"] = self.recommendations
+        if self.recommendations_error is not None:
+            result["recommendations_error"] = self.recommendations_error
 
         # Include metadata about data processing/detection
         result["date_column"] = self.date_column
@@ -199,13 +205,17 @@ def _run_recommendation_stage(result: PipelineResult) -> None:
     """
     logger.info("🤖 Stage 3/3 — Recommendation Agent: generating insights …")
 
-    recommendations = generate_recommendations(
-        analysis=result.analysis,
-        forecast_summary=result.forecast_summary,
-    )
-
-    result.recommendations = recommendations
-    logger.info("  ✔ Recommendations generated")
+    try:
+        result.recommendations = generate_recommendations(
+            analysis=result.analysis,
+            forecast_summary=result.forecast_summary,
+        )
+        logger.info("  ✔ Recommendations generated")
+    except RecommendationError as exc:
+        # Stages 1-2 are still valuable; surface the failure instead of
+        # failing the whole pipeline or passing an error string off as a report.
+        result.recommendations_error = str(exc)
+        logger.warning("  ✖ Recommendations skipped: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +246,8 @@ def run_pipeline(
         periods: Optional forecast horizon override.
         frequency: Optional forecast frequency override ('D', 'W', 'MS').
         skip_recommendations: If ``True``, skip Stage 3 (useful for testing
-            without an OpenAI API key).
+            without an OpenAI API key). If Stage 3 runs but fails, the
+            pipeline still succeeds and ``recommendations_error`` is set.
 
     Returns:
         A :class:`PipelineResult` containing outputs from every stage.

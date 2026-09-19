@@ -3,14 +3,15 @@ FastAPI Main Application Module
 Provides endpoints for the Multi-Agent AI Business Consultant Backend.
 """
 
+import io
 import logging
 from typing import Any, Dict
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
+from backend.config import CORS_ORIGINS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, OPENAI_MODEL, has_openai_key
 from backend.orchestrator import run_pipeline
 
 # Configure Logging
@@ -28,11 +29,12 @@ app = FastAPI(
 )
 
 # Configure CORS Middleware
-# Allows request from any origin by default for local development. Can be restricted in production.
+# Defaults to any origin for local development; set CORS_ORIGINS in .env to restrict.
+# Browsers reject "*" combined with credentials, so only allow credentials for explicit origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=CORS_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,13 +53,16 @@ async def root() -> Dict[str, str]:
 
 
 @app.get("/health", tags=["General"])
-async def health_check() -> Dict[str, str]:
+async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint to monitor application and dependency status.
     """
     return {
         "status": "healthy",
         "service": "multi-agent-consultant-backend",
+        "openai_configured": has_openai_key(),
+        "openai_model": OPENAI_MODEL,
+        "max_upload_mb": MAX_UPLOAD_MB,
     }
 
 
@@ -93,19 +98,30 @@ async def analyze_dataset(
             detail="Unsupported file format. Please upload a .csv, .xlsx, or .xls file.",
         )
 
-    # 2. Read file content into a Pandas DataFrame
+    # 2. Read file content, enforcing the size limit
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum upload size is {MAX_UPLOAD_MB} MB.",
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
+
+    # 3. Parse into a Pandas DataFrame
     try:
-        # Read the uploaded file binary stream directly
-        content = await file.read()
         if lower_filename.endswith(".csv"):
             # Try parsing CSV. Handle possible encoding issues.
             try:
-                df = pd.read_csv(pd.io.common.BytesIO(content), encoding="utf-8")
+                df = pd.read_csv(io.BytesIO(content), encoding="utf-8")
             except UnicodeDecodeError:
-                df = pd.read_csv(pd.io.common.BytesIO(content), encoding="latin-1")
+                df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
         else:
             # Excel files
-            df = pd.read_excel(pd.io.common.BytesIO(content))
+            df = pd.read_excel(io.BytesIO(content))
 
     except Exception as e:
         logger.error("Failed to parse uploaded file: %s", str(e), exc_info=True)
@@ -114,7 +130,7 @@ async def analyze_dataset(
             detail=f"Could not parse the uploaded file as a valid table. Error: {str(e)}",
         )
 
-    # 3. Run the orchestrator pipeline
+    # 4. Run the orchestrator pipeline
     logger.info("Starting pipeline execution for uploaded file: %s", filename)
     try:
         pipeline_result = run_pipeline(
@@ -124,7 +140,7 @@ async def analyze_dataset(
             skip_recommendations=skip_recommendations,
         )
 
-        # 4. Handle pipeline execution failures
+        # 5. Handle pipeline execution failures
         if not pipeline_result.success:
             logger.error("Pipeline run failed: %s", pipeline_result.error)
             raise HTTPException(

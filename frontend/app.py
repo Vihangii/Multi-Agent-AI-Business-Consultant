@@ -1,9 +1,15 @@
-import logging
 import io
+import logging
+import os
+
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
-import plotly.graph_objects as go
+from dotenv import load_dotenv
+
+load_dotenv()
+DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 # Configure page settings
 st.set_page_config(
@@ -110,7 +116,8 @@ def generate_sample_csv() -> bytes:
     trend = np.linspace(500, 1200, n)
     weekly_seasonality = 150 * np.sin(2 * np.pi * dates.dayofweek / 7.0)
     yearly_seasonality = 300 * np.sin(2 * np.pi * dates.dayofyear / 365.25)
-    noise = np.random.normal(0, 100, n)
+    rng = np.random.default_rng(42)  # fixed seed so the sample is reproducible
+    noise = rng.normal(0, 100, n)
     
     revenue = trend + weekly_seasonality + yearly_seasonality + noise
     revenue = np.clip(revenue, 100, None)  # Ensure no negative revenue
@@ -138,7 +145,8 @@ def call_analyze_api(
 ) -> dict | None:
     """Call the FastAPI backend's /analyze endpoint."""
     endpoint = f"{backend_url.rstrip('/')}/analyze"
-    files = {"file": (file_name, file_bytes, "text/csv")}
+    mime = "text/csv" if file_name.lower().endswith(".csv") else "application/octet-stream"
+    files = {"file": (file_name, file_bytes, mime)}
     params = {"skip_recommendations": skip_recommendations}
     if periods is not None:
         params["periods"] = periods
@@ -146,7 +154,7 @@ def call_analyze_api(
         params["frequency"] = frequency
         
     try:
-        response = requests.post(endpoint, files=files, params=params, timeout=120)
+        response = requests.post(endpoint, files=files, params=params, timeout=300)
         if response.status_code == 200:
             return response.json()
         else:
@@ -181,8 +189,8 @@ def main():
     
     backend_url = st.sidebar.text_input(
         "API Backend URL",
-        value="http://localhost:8000",
-        help="FastAPI backend host and port configuration.",
+        value=DEFAULT_BACKEND_URL,
+        help="FastAPI backend host and port. Defaults to BACKEND_URL from .env.",
     )
     
     st.sidebar.markdown("---")
@@ -380,14 +388,15 @@ def main():
             )
             
             # Growth direction
-            growth_pct = analysis.get("growth", {}).get("overall_percent", 0.0)
-            growth_dir = analysis.get("growth", {}).get("direction", "stable").upper()
-            growth_color = "#10b981" if growth_dir == "INCREASING" else "#ef4444"
+            growth_pct = analysis.get("growth", {}).get("overall_percent")
+            growth_dir = analysis.get("growth", {}).get("direction", "n/a").upper()
+            growth_color = {"INCREASING": "#10b981", "DECREASING": "#ef4444"}.get(growth_dir, "#94a3b8")
+            growth_txt = f"{growth_pct:+.2f}%" if isinstance(growth_pct, (int, float)) else "n/a"
             mc3.markdown(
                 f"""
                 <div class="metric-card">
                     <div class="metric-label">Historical Growth</div>
-                    <div class="metric-value" style="color: {growth_color};">{growth_pct:+.2f}%</div>
+                    <div class="metric-value" style="color: {growth_color};">{growth_txt}</div>
                     <div class="metric-desc">Overall trend: {growth_dir}</div>
                 </div>
                 """,
@@ -395,14 +404,15 @@ def main():
             )
             
             # Forecast Outlook
-            f_growth = forecast_sum.get("predicted_growth_percent", 0.0)
-            f_trend = forecast_sum.get("forecast_trend", "stable").upper()
-            ft_color = "#10b981" if f_trend == "UPWARD" else "#ef4444"
+            f_growth = forecast_sum.get("predicted_growth_percent")
+            f_trend = forecast_sum.get("forecast_trend", "n/a").upper()
+            ft_color = {"UPWARD": "#10b981", "DOWNWARD": "#ef4444"}.get(f_trend, "#94a3b8")
+            f_growth_txt = f"{f_growth:+.2f}%" if isinstance(f_growth, (int, float)) else "n/a"
             mc4.markdown(
                 f"""
                 <div class="metric-card">
                     <div class="metric-label">Forecast Outlook</div>
-                    <div class="metric-value" style="color: {ft_color};">{f_growth:+.2f}%</div>
+                    <div class="metric-value" style="color: {ft_color};">{f_growth_txt}</div>
                     <div class="metric-desc">Trend: {f_trend} ({forecast_sum.get('forecast_periods', '?')} × '{forecast_sum.get('forecast_frequency', '?')}' periods)</div>
                 </div>
                 """,
@@ -465,7 +475,7 @@ def main():
                     go.Scatter(
                         x=f_df["ds"],
                         y=f_df["predicted"],
-                        line=dict(color="#3b82f6", width=3, dash="dash" if "last_actual_date" in forecast_sum else "solid"),
+                        line=dict(color="#3b82f6", width=3),
                         name="Forecasted Trend",
                     )
                 )
@@ -509,7 +519,7 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Forecast metrics summary
-                st.markdown("#### 🔮 Forecast Forecast Metrics & Peak Values")
+                st.markdown("#### 🔮 Forecast Metrics & Peak Values")
                 f1, f2, f3 = st.columns(3)
                 f1.metric("Peak Forecasted Value", f"${forecast_sum.get('peak_forecasted_value', 0):,.2f}")
                 f2.metric("Peak Forecast Date", str(forecast_sum.get("peak_forecasted_date")))
@@ -534,6 +544,9 @@ def main():
                     mime="text/markdown",
                     use_container_width=True,
                 )
+            elif res.get("recommendations_error"):
+                st.error(f"The Recommendation Agent could not generate a report: {res['recommendations_error']}")
+                st.caption("Check that OPENAI_API_KEY is set in the backend's .env file, then re-run the pipeline.")
             elif skip_recommendations:
                 st.warning("AI Consultation recommendations were skipped. Toggle off 'Skip AI Recommendations' in the sidebar options to generate them.")
             else:
