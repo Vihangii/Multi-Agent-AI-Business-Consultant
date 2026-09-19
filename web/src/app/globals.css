@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+/* Design tokens. Light by default; dark follows the OS unless data-theme forces it. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: rgba(11, 11, 11, 0.1);
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+
+  --accent: #2a78d6;
+  --accent-soft: #cde2fb;
+  --series-forecast: #2a78d6;
+  --series-actual: #1baf7a;
+
+  --good: #006300;
+  --good-bg: #e6f4e6;
+  --warn: #8a5a00;
+  --warn-bg: #fff4db;
+  --bad: #b02a2a;
+  --bad-bg: #fbe8e8;
+  --info-bg: #e8f1fc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232322;
+    --border: rgba(255, 255, 255, 0.1);
+    --text: #ffffff;
+    --text-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+
+    --accent: #3987e5;
+    --accent-soft: #1c3a5e;
+    --series-forecast: #3987e5;
+    --series-actual: #199e70;
+
+    --good: #4ec24e;
+    --good-bg: #12301a;
+    --warn: #fab219;
+    --warn-bg: #3a2c0a;
+    --bad: #e66767;
+    --bad-bg: #3a1616;
+    --info-bg: #142538;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #232322;
+  --border: rgba(255, 255, 255, 0.1);
+  --text: #ffffff;
+  --text-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+
+  --accent: #3987e5;
+  --accent-soft: #1c3a5e;
+  --series-forecast: #3987e5;
+  --series-actual: #199e70;
+
+  --good: #4ec24e;
+  --good-bg: #12301a;
+  --warn: #fab219;
+  --warn-bg: #3a2c0a;
+  --bad: #e66767;
+  --bad-bg: #3a1616;
+  --info-bg: #142538;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-info-bg: var(--info-bg);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Markdown report */
+.prose-report h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.5rem;
+}
+.prose-report h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.4rem;
+}
+.prose-report p {
+  margin: 0.5rem 0;
+  line-height: 1.6;
+}
+.prose-report ul,
+.prose-report ol {
+  padding-left: 1.4rem;
+  margin: 0.5rem 0;
+}
+.prose-report ul {
+  list-style: disc;
+}
+.prose-report ol {
+  list-style: decimal;
+}
+.prose-report li {
+  margin: 0.25rem 0;
+  line-height: 1.55;
+}
+.prose-report strong {
+  font-weight: 600;
+}
+.prose-report hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+.prose-report table {
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+.prose-report th,
+.prose-report td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.6rem;
+}

@@ -8,10 +8,12 @@ CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendati
                 (pandas)        (Prophet)          (OpenAI)                (Streamlit)
 ```
 
-The Streamlit dashboard runs the agents **in-process by default** — one command
-starts the whole app. The same pipeline is also exposed as a FastAPI REST API
-for programmatic use, and the dashboard can be pointed at a remote API instead
-(sidebar → *Engine → Remote API server*).
+Two frontends share the same backend pipeline:
+
+- **Streamlit** (`frontend/app.py`) — runs the agents **in-process**; one command
+  starts the whole app. Best for local use and demos.
+- **Next.js** (`web/`) — a React web app **deployable on Vercel** that talks to
+  the FastAPI REST API. Best for hosting publicly. See [web/README.md](web/README.md).
 
 | Stage | Module | What it does |
 |---|---|---|
@@ -21,7 +23,8 @@ for programmatic use, and the dashboard can be pointed at a remote API instead
 | Orchestrator | `backend/orchestrator.py` | Runs the three stages and packages the result |
 | Upload parsing | `backend/io_utils.py` | Shared CSV/Excel validation + parsing used by both the API and the dashboard |
 | API (optional) | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
-| UI | `frontend/app.py` | Streamlit dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables. Runs the pipeline in-process or via the API |
+| Streamlit UI | `frontend/app.py` | Dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables. Runs the pipeline in-process or via the API |
+| Next.js UI | `web/` | Same features as a React/Tailwind app for Vercel; calls the REST API |
 
 ## Requirements
 
@@ -84,6 +87,16 @@ running — the agents execute inside the Streamlit process.
 cp .env.example .env        # set OPENAI_API_KEY if you have one
 docker compose up --build   # dashboard on http://localhost:8501
 ```
+
+### Next.js web app (Vercel)
+
+```bash
+uvicorn backend.main:app --reload --port 8000   # terminal 1: the API
+cd web && cp .env.example .env.local && npm install && npm run dev   # terminal 2: http://localhost:3000
+```
+
+Deploy: import the repo in Vercel with **Root Directory = `web`** and set
+`NEXT_PUBLIC_API_URL` to your hosted backend. Full steps in [web/README.md](web/README.md).
 
 ### With the REST API as well
 
@@ -153,8 +166,8 @@ pytest                 # full suite (~1 min, fits several Prophet models)
 pytest -m "not slow"   # fast unit tests only
 ```
 
-CI (`.github/workflows/ci.yml`) runs the suite on every push and PR, then
-builds the Docker image and smoke-tests the backend container.
+CI (`.github/workflows/ci.yml`) runs the Python suite, builds and smoke-tests the
+Docker image, and lints + builds the Next.js app on every push and PR.
 
 ## Project layout
 
@@ -170,6 +183,7 @@ backend/
     recommendation_agent.py
 frontend/
   app.py                  Streamlit dashboard
+web/                      Next.js frontend (Vercel)
 tests/
 Dockerfile, docker-compose.yml
 .github/workflows/ci.yml

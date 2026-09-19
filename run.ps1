@@ -1,15 +1,18 @@
 # Launches the Multi-Agent AI Business Consultant.
 #
-#   .\run.ps1              # dashboard only - runs the agents in-process (default)
+#   .\run.ps1              # Streamlit dashboard - runs the agents in-process (default)
 #   .\run.ps1 -WithApi     # also start the FastAPI server in a second window
+#   .\run.ps1 -Web         # FastAPI server + Next.js web app (web/) instead of Streamlit
 #   .\run.ps1 -WithApi -Port 8010
 #
 # Runs from any directory - it always uses the project root.
 
 param(
     [switch]$WithApi,
+    [switch]$Web,
     [int]$Port = 0
 )
+if ($Web) { $WithApi = $true }
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -58,12 +61,27 @@ if ($WithApi) {
     Write-Host "  API       ->  $backendUrl   (docs at $backendUrl/docs)" -ForegroundColor Cyan
 }
 
-Write-Host "  Dashboard ->  http://localhost:8501" -ForegroundColor Cyan
-Write-Host ""
-
-Start-Process powershell -ArgumentList @(
-    "-NoExit", "-Command",
-    "Set-Location '$root'; $frontendEnv; & '$python' -m streamlit run frontend/app.py --server.port 8501"
-) -WindowStyle Normal
+if ($Web) {
+    $web = Join-Path $root "web"
+    if (-not (Test-Path (Join-Path $web "node_modules"))) {
+        Write-Host "Installing web dependencies (npm install)..." -ForegroundColor Yellow
+        Push-Location $web; npm install --no-audit --no-fund; Pop-Location
+    }
+    $envLocal = Join-Path $web ".env.local"
+    if (-not (Test-Path $envLocal)) { Copy-Item (Join-Path $web ".env.example") $envLocal }
+    Write-Host "  Web app   ->  http://localhost:3000" -ForegroundColor Cyan
+    Write-Host ""
+    Start-Process powershell -ArgumentList @(
+        "-NoExit", "-Command",
+        "Set-Location '$web'; `$env:NEXT_PUBLIC_API_URL='$backendUrl'; npm run dev"
+    ) -WindowStyle Normal
+} else {
+    Write-Host "  Dashboard ->  http://localhost:8501" -ForegroundColor Cyan
+    Write-Host ""
+    Start-Process powershell -ArgumentList @(
+        "-NoExit", "-Command",
+        "Set-Location '$root'; $frontendEnv; & '$python' -m streamlit run frontend/app.py --server.port 8501"
+    ) -WindowStyle Normal
+}
 
 Write-Host "Starting... the dashboard will open in your browser shortly. Close the window(s) to stop." -ForegroundColor Green
