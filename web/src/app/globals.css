@@ -75,7 +75,8 @@
   }
 }
 
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+[data-theme="dark"] {
   color-scheme: dark;
   --page: #0b0d11;
   --surface: #14171c;

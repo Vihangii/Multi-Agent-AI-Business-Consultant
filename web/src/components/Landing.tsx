@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { AppShell } from "./AppShell";
 import { Reveal } from "./motion";
-import { Badge, Button, Icon } from "./ui";
+import { ParticleStory } from "./ParticleStory";
+import { Button, Icon } from "./ui";
 
 const STEPS = [
   {
@@ -49,43 +50,19 @@ const FEATURES = [
 
 export function Landing() {
   return (
-    <AppShell>
-      {/* Hero */}
-      <section className="bg-dots border-b border-border">
-        <div className="mx-auto max-w-7xl px-4 py-16 sm:py-24">
-          <div className="stagger max-w-3xl">
-            <Badge tone="accent" className="mb-5">
-              <Icon name="sparkle" size={11} /> Five agents · one upload
-            </Badge>
-            <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight sm:text-6xl">
-              Turn a sales spreadsheet into a{" "}
-              <span className="bg-gradient-to-r from-[#2a78d6] to-[#1baf7a] bg-clip-text text-transparent">
-                fact-checked strategy
-              </span>
-              .
-            </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-relaxed text-text-2">
-              Upload a CSV or Excel file. Get a cleaned dataset, a Prophet revenue forecast with accuracy scores and
-              what-if scenarios, and a strategy report written by an AI agent that queries your data and is audited by
-              a second one — exportable to PDF or PowerPoint.
-            </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link href="/app">
-                <Button variant="primary" size="lg">
-                  Open the workspace <Icon name="arrow" size={16} />
-                </Button>
-              </Link>
-              <a href="#how-it-works">
-                <Button variant="secondary" size="lg">
-                  See how it works
-                </Button>
-              </a>
-              <span className="text-sm text-muted">No account needed · works without an API key</span>
-            </div>
-          </div>
+    <AppShell dark>
+      {/* Scroll-driven particle story (hero) */}
+      <ParticleStory />
 
+      {/* Product preview */}
+      <section className="bg-dots border-b border-border">
+        <div className="mx-auto max-w-7xl px-4 pb-16 pt-12 sm:pb-24">
+          <Reveal className="mb-8 max-w-2xl">
+            <h2 className="text-3xl font-semibold tracking-tight">See the whole picture in one run</h2>
+            <p className="mt-3 text-text-2">KPIs, an honest forecast, scenarios, anomalies and a fact-checked report — from a single upload.</p>
+          </Reveal>
           {/* Faux product frame */}
-          <Reveal delay={150} className="mt-14 rounded-2xl border border-border bg-surface p-2 shadow-hero">
+          <Reveal delay={100} className="rounded-2xl border border-border bg-surface p-2 shadow-hero">
             <div className="rounded-xl border border-border bg-surface-2 p-4 sm:p-6">
               <div className="grid gap-3 sm:grid-cols-4">
                 {[

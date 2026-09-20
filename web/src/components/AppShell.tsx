@@ -134,15 +134,18 @@ export function AppShell({
   healthError,
   onToggleSidebar,
   fullBleed = false,
+  dark = false,
 }: {
   children: ReactNode;
   health?: HealthResult | null;
   healthError?: string | null;
   onToggleSidebar?: () => void;
   fullBleed?: boolean;
+  /** Force the dark palette for this page (e.g. the cinematic landing page). */
+  dark?: boolean;
 }) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-page text-text" data-theme={dark ? "dark" : undefined}>
       <header className="sticky top-0 z-30 border-b border-border bg-surface/85 backdrop-blur supports-[backdrop-filter]:bg-surface/70">
         <div className={`flex h-14 items-center gap-3 px-4 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
           {onToggleSidebar && (
@@ -168,7 +171,7 @@ export function AppShell({
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {health !== undefined && <ApiStatus health={health ?? null} error={healthError ?? null} />}
-            <ThemeToggle />
+            {!dark && <ThemeToggle />}
           </div>
         </div>
       </header>
