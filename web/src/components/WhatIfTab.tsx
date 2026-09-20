@@ -47,7 +47,7 @@ export function WhatIfTab({ result }: { result: AnalyzeResult }) {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>🎛️ What-if: change {driverLabel} by…</SectionTitle>
+        <SectionTitle>What-if: change {driverLabel} by…</SectionTitle>
         {w.method === "regressor" ? (
           <p className="mb-3 text-sm text-text-2">
             The model was fit with <code>{w.driver}</code> as a Prophet regressor, so these
@@ -114,7 +114,7 @@ export function WhatIfTab({ result }: { result: AnalyzeResult }) {
       </Card>
 
       <Card>
-        <SectionTitle>📈 Baseline vs scenario</SectionTitle>
+        <SectionTitle>Baseline vs scenario</SectionTitle>
         <div className="h-[340px] w-full">
           <ResponsiveContainer>
             <LineChart data={rows} margin={{ top: 12, right: 16, bottom: 4, left: 8 }}>
@@ -161,7 +161,7 @@ export function WhatIfTab({ result }: { result: AnalyzeResult }) {
       </Card>
 
       <Card>
-        <SectionTitle>📋 All scenarios</SectionTitle>
+        <SectionTitle>All scenarios</SectionTitle>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-surface-2 text-left">

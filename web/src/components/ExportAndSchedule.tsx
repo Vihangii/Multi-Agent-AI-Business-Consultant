@@ -5,7 +5,7 @@ import { uploadToBlob } from "@/lib/blob";
 import { buildReportData, exportPdf, exportPptx } from "@/lib/export";
 import type { AnalyzeResult } from "@/lib/types";
 import type { LastRun } from "./ConsultantApp";
-import { Notice, Spinner } from "./ui";
+import { Button, Icon, Notice, Spinner } from "./ui";
 
 interface Props {
   result: AnalyzeResult;
@@ -44,20 +44,18 @@ export function ExportBar({ result, lastRun, file }: Props) {
     URL.revokeObjectURL(url);
   }
 
-  const btn = "inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50";
-
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className={btn} disabled={busy !== null} onClick={() => run("pdf")}>
-        {busy === "pdf" ? <Spinner /> : "📄"} Export PDF
-      </button>
-      <button type="button" className={btn} disabled={busy !== null} onClick={() => run("pptx")}>
-        {busy === "pptx" ? <Spinner /> : "📊"} Export PowerPoint
-      </button>
+      <Button size="sm" disabled={busy !== null} onClick={() => run("pdf")}>
+        {busy === "pdf" ? <Spinner /> : <Icon name="download" size={14} />} PDF
+      </Button>
+      <Button size="sm" disabled={busy !== null} onClick={() => run("pptx")}>
+        {busy === "pptx" ? <Spinner /> : <Icon name="download" size={14} />} PowerPoint
+      </Button>
       {result.recommendations && (
-        <button type="button" className={btn} onClick={downloadMd}>
-          📝 Markdown
-        </button>
+        <Button size="sm" onClick={downloadMd}>
+          <Icon name="file" size={14} /> Markdown
+        </Button>
       )}
       <ScheduleButton result={result} lastRun={lastRun} file={file} />
       {err && <Notice tone="bad" className="basis-full">{err}</Notice>}
@@ -107,13 +105,9 @@ function ScheduleButton({ lastRun, file }: Props) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm font-medium hover:bg-accent-soft"
-      >
-        📧 Email me monthly
-      </button>
+      <Button size="sm" onClick={() => setOpen((o) => !o)}>
+        <Icon name="mail" size={14} /> Email me monthly
+      </Button>
       {open && (
         <form onSubmit={submit} className="basis-full rounded-lg border border-border bg-surface-2/60 p-3">
           <div className="mb-2 text-sm font-semibold">Monthly re-run</div>
@@ -130,13 +124,9 @@ function ScheduleButton({ lastRun, file }: Props) {
               placeholder="you@company.com"
               className="min-w-[220px] flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
             />
-            <button
-              type="submit"
-              disabled={state === "saving" || state === "done"}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-            >
+            <Button type="submit" variant="primary" disabled={state === "saving" || state === "done"}>
               {state === "saving" ? <Spinner /> : null} Schedule
-            </button>
+            </Button>
           </div>
           {state === "done" && <Notice tone="good" className="mt-2">{msg}</Notice>}
           {state === "error" && <Notice tone="bad" className="mt-2">{msg}</Notice>}
