@@ -181,7 +181,7 @@ export function Landing() {
             report — about a minute end to end.
           </p>
           <Link href="/app" className="mt-6 inline-block">
-            <Button size="lg" className="bg-white text-[#1e3a8a] hover:bg-white/90">
+            <Button variant="light" size="lg">
               Open the workspace <Icon name="arrow" size={16} />
             </Button>
           </Link>

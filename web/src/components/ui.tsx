@@ -109,7 +109,7 @@ export function Select({
   );
 }
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "light";
 const variantClass: Record<ButtonVariant, string> = {
   primary:
     "bg-accent text-accent-ink shadow-card hover:bg-accent-hover disabled:hover:bg-accent",
@@ -117,6 +117,8 @@ const variantClass: Record<ButtonVariant, string> = {
     "border border-border bg-surface text-text shadow-card hover:border-border-strong hover:bg-surface-2",
   ghost: "text-text-2 hover:bg-surface-2 hover:text-text",
   danger: "bg-bad text-white hover:opacity-90",
+  // For use on colored/gradient backgrounds: fixed colors regardless of theme
+  light: "bg-white text-[#1e3a8a] shadow-card hover:bg-white/90",
 };
 
 export function Button({
