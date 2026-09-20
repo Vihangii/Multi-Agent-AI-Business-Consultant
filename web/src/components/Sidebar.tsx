@@ -60,7 +60,7 @@ function Step({
         }`}
         aria-hidden
       >
-        {done ? <Icon name="check" size={12} /> : n}
+        {done ? <span className="animate-pop inline-flex"><Icon name="check" size={12} /></span> : n}
       </span>
       <h3 className="mb-3 text-sm font-semibold leading-6">{title}</h3>
       <div className="space-y-3">{children}</div>

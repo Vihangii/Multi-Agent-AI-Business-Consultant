@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import type { HealthResult } from "@/lib/types";
+import { Preloader } from "./Preloader";
 import { Badge, Icon } from "./ui";
-
-const REPO = "https://github.com/Vihangii/Multi-Agent-AI-Business-Consultant";
 
 export function Logo({ size = 28 }: { size?: number }) {
   return (
@@ -136,15 +135,19 @@ export function AppShell({
   healthError,
   onToggleSidebar,
   fullBleed = false,
+  dark = false,
 }: {
   children: ReactNode;
   health?: HealthResult | null;
   healthError?: string | null;
   onToggleSidebar?: () => void;
   fullBleed?: boolean;
+  /** Force the dark palette for this page (e.g. the cinematic landing page). */
+  dark?: boolean;
 }) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-page text-text" data-theme={dark ? "dark" : undefined}>
+      <Preloader />
       <header className="sticky top-0 z-30 border-b border-border bg-surface/85 backdrop-blur supports-[backdrop-filter]:bg-surface/70">
         <div className={`flex h-14 items-center gap-3 px-4 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
           {onToggleSidebar && (
@@ -167,13 +170,10 @@ export function AppShell({
             <Link href="/#how-it-works" className="rounded-md px-2.5 py-1.5 text-text-2 hover:bg-surface-2 hover:text-text">
               How it works
             </Link>
-            <a href={REPO} target="_blank" rel="noreferrer" className="rounded-md px-2.5 py-1.5 text-text-2 hover:bg-surface-2 hover:text-text">
-              GitHub
-            </a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {health !== undefined && <ApiStatus health={health ?? null} error={healthError ?? null} />}
-            <ThemeToggle />
+            {!dark && <ThemeToggle />}
           </div>
         </div>
       </header>
@@ -183,12 +183,7 @@ export function AppShell({
       <footer className="border-t border-border bg-surface">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-5 text-xs text-muted sm:flex-row">
           <span>© {new Date().getFullYear()} Multi-Agent AI Business Consultant</span>
-          <span className="flex items-center gap-3">
-            <span>FastAPI · Prophet · Next.js</span>
-            <a href={REPO} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-text">
-              <Icon name="github" size={14} /> Source
-            </a>
-          </span>
+          <span>FastAPI · Prophet · Next.js</span>
         </div>
       </footer>
     </div>

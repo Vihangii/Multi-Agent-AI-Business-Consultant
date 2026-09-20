@@ -149,7 +149,9 @@ export function ForecastChart({ forecast, actuals, lastActualDate, anomalies }: 
             stroke="none"
             fill={SERIES.forecast}
             fillOpacity={0.14}
-            isAnimationActive={false}
+            isAnimationActive
+            animationDuration={900}
+            animationEasing="ease-out"
             legendType="rect"
           />
           <Line
@@ -159,7 +161,9 @@ export function ForecastChart({ forecast, actuals, lastActualDate, anomalies }: 
             stroke={SERIES.forecast}
             strokeWidth={2}
             dot={false}
-            isAnimationActive={false}
+            isAnimationActive
+            animationDuration={1100}
+            animationEasing="ease-out"
           />
           <Scatter
             name="Actual"
