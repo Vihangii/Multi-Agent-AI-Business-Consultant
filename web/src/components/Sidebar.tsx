@@ -23,6 +23,8 @@ export interface SidebarState {
   inspectError: string | null;
   dateColumn: string; // AUTO or column name
   revenueColumn: string;
+  regressorColumn: string; // "" = none
+  language: string;
   frequency: Frequency | "";
   periods: number;
   skipRecommendations: boolean;
@@ -94,7 +96,10 @@ export function Sidebar({
         <div className="mt-1 text-xs text-muted">
           {health ? (
             <>
-              API online · {health.openai_configured ? "AI enabled" : "no OpenAI key"}
+              API online ·{" "}
+              {health.llm_configured
+                ? `AI: ${health.llm_provider} (${health.llm_model})`
+                : "no LLM configured"}
               {health.auth_required && " · key required"}
             </>
           ) : healthError ? (
@@ -179,6 +184,24 @@ export function Sidebar({
                   value={state.revenueColumn}
                   onChange={(v) => onChange({ revenueColumn: v })}
                   options={colOptions}
+                />
+              </div>
+              <div>
+                <Label
+                  htmlFor="drivercol"
+                  hint="A numeric column that drives revenue (e.g. marketing spend). Enables 'what-if' scenarios learned from your data."
+                >
+                  What-if driver (optional)
+                </Label>
+                <Select
+                  id="drivercol"
+                  value={state.regressorColumn}
+                  onChange={(v) => onChange({ regressorColumn: v })}
+                  options={[{ value: "", label: "None — simple % uplift" }].concat(
+                    (state.inspect.numeric_columns ?? [])
+                      .filter((c) => c !== state.dateColumn && c !== state.revenueColumn)
+                      .map((c) => ({ value: c, label: c })),
+                  )}
                 />
               </div>
               {(state.inspect.detected_date_column === null ||
@@ -289,9 +312,20 @@ export function Sidebar({
             </span>
           </span>
         </label>
-        {health && !health.openai_configured && !state.skipRecommendations && (
+        <div className="mt-3">
+          <Label htmlFor="lang">Report language</Label>
+          <Select
+            id="lang"
+            value={state.language}
+            disabled={state.skipRecommendations}
+            onChange={(v) => onChange({ language: v })}
+            options={(health?.languages ?? ["English"]).map((l) => ({ value: l, label: l }))}
+          />
+        </div>
+        {health && !health.llm_configured && !state.skipRecommendations && (
           <Notice tone="info" className="mt-2">
-            The API has no OpenAI key — the report stage will be reported as unavailable.
+            The API has no LLM provider configured (OpenAI, Anthropic or Ollama) — the report stage
+            will be reported as unavailable.
           </Notice>
         )}
       </section>

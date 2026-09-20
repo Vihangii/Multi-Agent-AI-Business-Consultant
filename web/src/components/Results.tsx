@@ -5,12 +5,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { fmtDate, fmtInt, fmtMoney, fmtPct } from "@/lib/format";
 import type { AnalyzeResult } from "@/lib/types";
+import { AgentActivity, AnomaliesCard } from "./AgentPanels";
+import type { LastRun } from "./ConsultantApp";
+import { ExportBar } from "./ExportAndSchedule";
 import { ForecastChart } from "./ForecastChart";
 import { Card, Metric, Notice, SectionTitle } from "./ui";
+import { WhatIfTab } from "./WhatIfTab";
 
 const TABS = [
   { id: "dashboard", label: "📊 Executive Dashboard" },
   { id: "forecast", label: "📈 Revenue Forecast" },
+  { id: "whatif", label: "🎛️ What-if" },
   { id: "report", label: "🚀 Strategic AI Report" },
   { id: "data", label: "📋 Cleaned Data" },
 ] as const;
@@ -19,14 +24,20 @@ type TabId = (typeof TABS)[number]["id"];
 export function Results({
   result,
   skipRecommendations,
+  lastRun,
+  file,
 }: {
   result: AnalyzeResult;
   skipRecommendations: boolean;
+  lastRun: LastRun | null;
+  file: File | null;
+  apiKey?: string;
 }) {
   const [tab, setTab] = useState<TabId>("dashboard");
 
   return (
     <div className="space-y-4">
+      <ExportBar result={result} lastRun={lastRun} file={file} />
       <div role="tablist" className="flex flex-wrap gap-1 border-b border-border">
         {TABS.map((t) => (
           <button
@@ -47,6 +58,7 @@ export function Results({
 
       {tab === "dashboard" && <DashboardTab result={result} />}
       {tab === "forecast" && <ForecastTab result={result} />}
+      {tab === "whatif" && <WhatIfTab result={result} />}
       {tab === "report" && (
         <ReportTab result={result} skipRecommendations={skipRecommendations} />
       )}
@@ -107,6 +119,7 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
             v={`${fmtDate(a.date_range.start)} → ${fmtDate(a.date_range.end)} (${fmtInt(a.date_range.span_days)} days)`}
           />
           <Row k="Detected revenue column" v={<code>{result.revenue_column}</code>} />
+          <Row k="What-if driver" v={result.regressor_column ? <code>{result.regressor_column}</code> : "none"} />
           <Row k="Records (raw → cleaned)" v={`${fmtInt(result.raw_row_count)} → ${fmtInt(result.cleaned_row_count)}`} />
           <Row k="Granularity" v={fs.data_granularity} />
           <Row k="Pipeline time" v={`${result.elapsed_seconds.toFixed(1)} s`} />
@@ -148,6 +161,8 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
           )}
         </Card>
       </div>
+
+      <AnomaliesCard anomalies={result.anomalies} />
     </div>
   );
 }
@@ -175,6 +190,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
           forecast={result.forecast}
           actuals={result.cleaned_data}
           lastActualDate={fs.last_actual_date}
+          anomalies={result.anomalies?.points}
         />
       </Card>
 
@@ -252,40 +268,22 @@ function ReportTab({
 }) {
   const md = result.recommendations;
 
-  function download() {
-    if (!md) return;
-    const blob = new Blob([md], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "AI_Consultant_Report.md";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
     <Card>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <SectionTitle>🚀 Strategic Consultation Recommendations</SectionTitle>
-        {md && (
-          <button
-            type="button"
-            onClick={download}
-            className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm font-medium hover:bg-accent-soft"
-          >
-            📥 Export as Markdown
-          </button>
-        )}
-      </div>
+      <SectionTitle>🚀 Strategic Consultation Recommendations</SectionTitle>
       {md ? (
-        <div className="prose-report text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+        <div className="space-y-4">
+          <AgentActivity agent={result.agent} />
+          <div className="prose-report text-sm">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+          </div>
         </div>
       ) : result.recommendations_error ? (
         <Notice tone="bad">
-          <div>The Recommendation Agent could not generate a report: {result.recommendations_error}</div>
+          <div>The Strategist Agent could not generate a report: {result.recommendations_error}</div>
           <div className="mt-1 text-xs opacity-80">
-            Check that OPENAI_API_KEY is set on the API server, then re-run the pipeline.
+            Configure a provider on the API server (OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_MODEL for a
+            local model), then re-run the pipeline.
           </div>
         </Notice>
       ) : skipRecommendations ? (

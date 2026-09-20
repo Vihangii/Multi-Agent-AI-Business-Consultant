@@ -1,7 +1,8 @@
 # Web frontend (Next.js)
 
 Next.js 16 / React 19 / Tailwind 4 client for the Multi-Agent AI Business
-Consultant API. Deploys to Vercel; the FastAPI backend runs elsewhere.
+Consultant API. Deploys to Vercel (or via `web/Dockerfile`); the FastAPI backend
+runs as a container or as a Vercel Python function.
 
 ```
 Browser ──▶ Next.js (Vercel, static)  ──▶  FastAPI backend (Docker / Render / Railway / VM)
@@ -27,6 +28,14 @@ The blob is deleted when a different file is chosen.
 - Forecast chart: 95% interval band, forecast line, actual markers, crosshair tooltip
 - Backtest accuracy: MAPE, MAE, 95% interval coverage, plain-language rating
 - Strategic AI report (markdown) with export, plus “Skip AI Recommendations”
+- What-if tab: pick a numeric driver column (e.g. marketing spend); the API fits it as a
+  Prophet regressor and the slider switches between precomputed −30…+50% scenarios instantly
+- Report language selector (14 languages)
+- Export the full analysis as **PDF** (`@react-pdf/renderer`, vector chart) or
+  **PowerPoint** (`pptxgenjs`, native editable chart) — both rendered in the browser
+- **Email me monthly**: stores the dataset in Vercel Blob and a schedule document;
+  `/api/cron/monthly` (Vercel Cron, 1st of each month 08:00 UTC) re-runs the analysis
+  and emails the result with Resend, with a signed unsubscribe link
 - Cleaned-data and forecast tables
 - Light/dark theme from the OS, responsive down to phone width
 
@@ -57,9 +66,12 @@ uvicorn backend.main:app --reload --port 8000
 3. Environment variables:
    - `NEXT_PUBLIC_API_URL` = `https://<your-backend-host>`
    - `NEXT_PUBLIC_MAX_UPLOAD_MB` = `25` (optional)
-4. (If the API is on Vercel) **Storage → Create Blob store → connect** to this
-   project so uploads over 4.5 MB work.
-5. Deploy. Vercel auto-detects Next.js; no `vercel.json` is needed.
+4. **Storage → Create Blob store → connect** to this project (needed for
+   uploads over 4.5 MB when the API is on Vercel, and for monthly schedules).
+5. For monthly emails: set `RESEND_API_KEY` and `EMAIL_FROM` (a sender verified
+   in Resend). `web/vercel.json` registers the cron; Vercel sets `CRON_SECRET`.
+   Optionally `API_KEY` (if the API requires one) and `APP_URL`.
+6. Deploy. Vercel auto-detects Next.js.
 
 If the backend has `API_KEY` set, the sidebar shows an API-key field and sends
 it as `X-API-Key`. Note that anything the browser sends is visible to the user,
@@ -82,13 +94,21 @@ src/
   components/
     ConsultantApp  state, health check, inspect-on-upload, run
     Sidebar        upload, sample CSV, column picker + preview, forecast options, skip-AI, run button
-    Results        tabs: dashboard, forecast (+ chart, accuracy), AI report, data
+    Results        tabs: dashboard, forecast (+ chart, accuracy), what-if, AI report, data
+    WhatIfTab      scenario slider, baseline-vs-scenario chart, scenario table
+    ExportAndSchedule  PDF / PPTX / Markdown buttons and the monthly-email form
+    ReportPdf      @react-pdf/renderer document (SVG chart)
     ForecastChart  Recharts composed chart
     ui             cards, notices, metrics, selects
   app/api/upload   Vercel Blob client-upload token route (+ DELETE cleanup)
+  app/api/schedules   create / unsubscribe monthly re-runs
+  app/api/cron/monthly   Vercel Cron target: re-run every schedule and email the result
   lib/
     api            fetch wrappers for /health, /inspect, /analyze (file or file_url)
     blob           browser → Vercel Blob upload helper
+    export         report data model, PDF + PPTX generation
+    schedules      schedule store (JSON documents in Vercel Blob), unsubscribe tokens
+    email          HTML email builder + Resend sender
     types          response shapes (mirror the Python side)
     format         money / percent / date formatters
     sample         seeded synthetic sample CSV

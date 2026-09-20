@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, analyzeFile, getHealth, inspectFile, type FileSource } from "@/lib/api";
 import { deleteBlob, uploadToBlob } from "@/lib/blob";
-import type { AnalyzeResult, HealthResult } from "@/lib/types";
+import type { AnalyzeOptions, AnalyzeResult, HealthResult } from "@/lib/types";
+
+/** What the last successful run used — needed to schedule a monthly re-run. */
+export interface LastRun {
+  fileUrl: string | null;
+  fileName: string;
+  options: AnalyzeOptions;
+}
 import { Results } from "./Results";
 import { AUTO, HORIZON_BOUNDS, Sidebar, type SidebarState } from "./Sidebar";
 import { Card, Notice } from "./ui";
@@ -16,6 +23,8 @@ const initialState: SidebarState = {
   inspectError: null,
   dateColumn: AUTO,
   revenueColumn: AUTO,
+  regressorColumn: "",
+  language: "English",
   frequency: "",
   periods: HORIZON_BOUNDS.D[2],
   skipRecommendations: false,
@@ -30,6 +39,7 @@ export function ConsultantApp() {
   const [runError, setRunError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [resultSkipped, setResultSkipped] = useState(false);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const inspectSeq = useRef(0);
   // Blob URL for the current file when it was too large to POST directly
@@ -89,6 +99,7 @@ export function ConsultantApp() {
         inspectError: null,
         dateColumn: AUTO,
         revenueColumn: AUTO,
+        regressorColumn: "",
       });
       try {
         const info = await inspectFile(await resolveSource(file), state.apiKey || undefined);
@@ -124,11 +135,26 @@ export function ConsultantApp() {
           skipRecommendations: state.skipRecommendations,
           dateColumn: state.dateColumn === AUTO ? null : state.dateColumn,
           revenueColumn: state.revenueColumn === AUTO ? null : state.revenueColumn,
+          regressorColumn: state.regressorColumn || null,
+          language: state.language,
         },
         state.apiKey || undefined,
       );
       setResult(res);
       setResultSkipped(state.skipRecommendations);
+      setLastRun({
+        fileUrl: blobUrl.current,
+        fileName: state.file.name,
+        options: {
+          periods: state.frequency ? state.periods : null,
+          frequency: state.frequency || null,
+          skipRecommendations: state.skipRecommendations,
+          dateColumn: state.dateColumn === AUTO ? null : state.dateColumn,
+          revenueColumn: state.revenueColumn === AUTO ? null : state.revenueColumn,
+          regressorColumn: state.regressorColumn || null,
+          language: state.language,
+        },
+      });
       if (window.innerWidth < 1024) setSidebarOpen(false);
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -189,7 +215,13 @@ export function ConsultantApp() {
           )}
 
           {result ? (
-            <Results result={result} skipRecommendations={resultSkipped} />
+            <Results
+              result={result}
+              skipRecommendations={resultSkipped}
+              lastRun={lastRun}
+              file={state.file}
+              apiKey={state.apiKey}
+            />
           ) : (
             <Welcome running={running} />
           )}
@@ -207,7 +239,7 @@ function Welcome({ running }: { running: boolean }) {
           ? "⚡ Running the multi-agent consulting pipeline… this takes a few seconds (longer with AI recommendations)."
           : "👈 Upload your business transaction data in the sidebar (or download the sample CSV) and click Run Consultant Pipeline to begin."}
       </Notice>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
         <Card>
           <h3 className="mb-2 font-semibold">🔍 1. Data Agent</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
@@ -225,11 +257,27 @@ function Welcome({ running }: { running: boolean }) {
           </ul>
         </Card>
         <Card>
-          <h3 className="mb-2 font-semibold">🚀 3. Recommendation Agent</h3>
+          <h3 className="mb-2 font-semibold">🚨 3. Anomaly Agent</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Sends the analysis to an OpenAI GPT model.</li>
-            <li>Returns prioritised, data-backed strategies.</li>
-            <li>Includes a 90-day action plan.</li>
+            <li>Scores every day against the model&apos;s expectation.</li>
+            <li>Flags collapses and spikes with robust z-scores.</li>
+            <li>Hands them to the strategist: one-off or signal?</li>
+          </ul>
+        </Card>
+        <Card>
+          <h3 className="mb-2 font-semibold">🤖 4. Strategist Agent</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
+            <li>Queries the data with tools (months, comparisons, what-if).</li>
+            <li>Writes prioritised, data-backed strategies and a 90-day plan.</li>
+            <li>Runs on OpenAI, Claude or a local Ollama model.</li>
+          </ul>
+        </Card>
+        <Card>
+          <h3 className="mb-2 font-semibold">🧐 5. Critic Agent</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
+            <li>Fact-checks every figure in the report against the data.</li>
+            <li>Rewrites wrong claims and lists the corrections.</li>
+            <li>Never blocks delivery — you always get the analysis.</li>
           </ul>
         </Card>
       </div>

@@ -1,9 +1,15 @@
 """
 Orchestrator Module
-Connects the three agents (data_agent, forecast_agent, recommendation_agent)
-and runs the full analysis → forecast → recommendation pipeline.
+Runs the agent pipeline:
+
+    1. Data Agent            — detect, clean, analyse
+    2. Forecast Agent        — Prophet forecast, backtest, what-if scenarios
+    2b. Anomaly Agent        — flag days/months that departed from expectation
+    3. Strategist Agent      — queries the data with tools and writes the report
+    3b. Critic Agent         — fact-checks the report against the numbers
 """
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -16,11 +22,12 @@ from backend.agents.data_agent import (
     find_date_column,
     find_revenue_column,
 )
+from backend.agents.anomaly_agent import detect_anomalies
+from backend.agents.critic_agent import build_facts_sheet, review_report
 from backend.agents.forecast_agent import forecast_revenue
-from backend.agents.recommendation_agent import (
-    RecommendationError,
-    generate_recommendations,
-)
+from backend.agents.recommendation_agent import RecommendationError, run_strategist
+from backend.agents.strategist_tools import DataContext, get_monthly_breakdown
+from backend.config import CRITIC_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +55,16 @@ class PipelineResult:
         # Stage 2: Forecast Agent outputs
         self.forecast_df: pd.DataFrame | None = None
         self.forecast_summary: dict | None = None
+        self.whatif: dict | None = None
+        self.regressor_column: str | None = None
 
-        # Stage 3: Recommendation Agent outputs
+        # Stage 2b: Anomaly Agent outputs
+        self.anomalies: dict | None = None
+
+        # Stage 3: Strategist + Critic outputs
         self.recommendations: str | None = None
         self.recommendations_error: str | None = None
+        self.agent: dict | None = None  # mode, provider, model, tool_calls, qa
 
         # Metadata
         self.elapsed_seconds: float = 0.0
@@ -76,15 +89,24 @@ class PipelineResult:
         if self.forecast_df is not None:
             result["forecast"] = self.forecast_df.to_dict(orient="records")
 
+        if self.whatif is not None:
+            result["whatif"] = self.whatif
+
+        if self.anomalies is not None:
+            result["anomalies"] = self.anomalies
+
         if self.recommendations is not None:
             result["recommendations"] = self.recommendations
         if self.recommendations_error is not None:
             result["recommendations_error"] = self.recommendations_error
+        if self.agent is not None:
+            result["agent"] = self.agent
 
         # Include metadata about data processing/detection
         result["columns"] = self.columns
         result["date_column"] = self.date_column
         result["revenue_column"] = self.revenue_column
+        result["regressor_column"] = self.regressor_column
         result["raw_row_count"] = self.raw_row_count
         result["cleaned_row_count"] = self.cleaned_row_count
 
@@ -100,6 +122,7 @@ def _run_data_stage(
     result: PipelineResult,
     date_column: str | None = None,
     revenue_column: str | None = None,
+    regressor_column: str | None = None,
 ) -> pd.DataFrame:
     """
     Stage 1 — Data Agent: detect columns, clean data, and compute statistics.
@@ -109,6 +132,8 @@ def _run_data_stage(
         result: PipelineResult being populated.
         date_column: Explicit date column name; auto-detected if None.
         revenue_column: Explicit revenue column name; auto-detected if None.
+        regressor_column: Optional numeric driver column (e.g. marketing
+            spend) carried through cleaning for what-if scenarios.
 
     Returns:
         Cleaned DataFrame ready for forecasting.
@@ -123,7 +148,7 @@ def _run_data_stage(
     result.columns = [str(c) for c in df.columns]
 
     # Use caller-supplied columns when given, otherwise detect
-    for name, label in ((date_column, "date"), (revenue_column, "revenue")):
+    for name, label in ((date_column, "date"), (revenue_column, "revenue"), (regressor_column, "driver")):
         if name is not None and name not in df.columns:
             raise ValueError(
                 f"The {label} column '{name}' does not exist in the dataset. "
@@ -148,13 +173,26 @@ def _run_data_stage(
             "(e.g. 'revenue', 'sales', 'amount')."
         )
 
+    if regressor_column is not None and regressor_column in (date_col, revenue_col):
+        raise ValueError("The driver column must be different from the date and revenue columns.")
+
     result.date_column = date_col
     result.revenue_column = revenue_col
+    result.regressor_column = regressor_column
     logger.info("  ✔ Detected date column: '%s'", date_col)
     logger.info("  ✔ Detected revenue column: '%s'", revenue_col)
+    if regressor_column:
+        logger.info("  ✔ What-if driver column: '%s'", regressor_column)
 
     # Clean
-    cleaned_df = clean_dataframe(df, date_col, revenue_col)
+    cleaned_df = clean_dataframe(
+        df, date_col, revenue_col, extra_cols=[regressor_column] if regressor_column else None
+    )
+    if regressor_column and cleaned_df[regressor_column].notna().sum() < len(cleaned_df) * 0.8:
+        raise ValueError(
+            f"The driver column '{regressor_column}' is not numeric enough to use "
+            "(needs a number on at least 80% of rows)."
+        )
     if cleaned_df.empty:
         raise ValueError(
             "The dataset is empty after cleaning. "
@@ -185,6 +223,7 @@ def _run_forecast_stage(
     result: PipelineResult,
     periods: int | None = None,
     frequency: str | None = None,
+    regressor_column: str | None = None,
 ) -> None:
     """
     Stage 2 — Forecast Agent: generate revenue forecast with Prophet.
@@ -202,11 +241,14 @@ def _run_forecast_stage(
         kwargs["periods"] = periods
     if frequency is not None:
         kwargs["frequency"] = frequency
+    if regressor_column is not None:
+        kwargs["regressor"] = regressor_column
 
     forecast_output = forecast_revenue(cleaned_df, **kwargs)
 
     result.forecast_df = forecast_output["forecast_df"]
     result.forecast_summary = forecast_output["summary"]
+    result.whatif = forecast_output.get("whatif")
 
     logger.info(
         "  ✔ Forecast generated — trend: %s, predicted growth: %s%%",
@@ -215,26 +257,76 @@ def _run_forecast_stage(
     )
 
 
-def _run_recommendation_stage(result: PipelineResult) -> None:
+def _run_anomaly_stage(result: PipelineResult) -> None:
+    """Stage 2b — Anomaly Agent: compare history with the model's expectation."""
+    logger.info("🚨 Stage 2b — Anomaly Agent: scanning for outliers …")
+    try:
+        result.anomalies = detect_anomalies(result.cleaned_df, result.forecast_df)
+        s = result.anomalies["summary"]
+        logger.info("  ✔ %d point anomalies, %d monthly shocks", s["point_count"], s["period_count"])
+    except Exception as exc:  # anomalies are advisory; never fail the run over them
+        logger.warning("  ✖ Anomaly detection failed: %s", exc)
+        result.anomalies = {"points": [], "periods": [], "summary": {"point_count": 0, "spike_count": 0,
+                            "drop_count": 0, "largest_drop": None, "largest_spike": None,
+                            "period_count": 0, "anomalous_share_percent": 0.0, "error": str(exc)}}
+
+
+def _run_recommendation_stage(result: PipelineResult, language: str | None = None) -> None:
     """
-    Stage 3 — Recommendation Agent: produce AI-powered business advice.
+    Stage 3 — Strategist Agent (tool-using) followed by the Critic Agent.
 
     Args:
-        result: PipelineResult populated by the first two stages.
+        result: PipelineResult populated by the earlier stages.
+        language: Language to write the report in (default English).
     """
-    logger.info("🤖 Stage 3/3 — Recommendation Agent: generating insights …")
+    logger.info("🤖 Stage 3 — Strategist Agent: investigating the data …")
+
+    ctx = DataContext(
+        cleaned_df=result.cleaned_df,
+        analysis=result.analysis,
+        forecast_summary=result.forecast_summary,
+        whatif=result.whatif,
+        anomalies=result.anomalies,
+        granularity=(result.forecast_summary or {}).get("data_granularity", "daily"),
+    )
 
     try:
-        result.recommendations = generate_recommendations(
-            analysis=result.analysis,
-            forecast_summary=result.forecast_summary,
-        )
-        logger.info("  ✔ Recommendations generated")
+        strat = run_strategist(ctx, language=language)
     except RecommendationError as exc:
         # Stages 1-2 are still valuable; surface the failure instead of
         # failing the whole pipeline or passing an error string off as a report.
         result.recommendations_error = str(exc)
         logger.warning("  ✖ Recommendations skipped: %s", exc)
+        return
+
+    logger.info("  ✔ Report drafted (%s mode, %d tool calls)", strat.mode, len(strat.tool_calls))
+    result.recommendations = strat.report
+    result.agent = {
+        "mode": strat.mode,
+        "provider": strat.provider,
+        "model": strat.model,
+        "tool_calls": strat.tool_calls,
+        "rounds": strat.rounds,
+        "usage": strat.usage,
+        "qa": {"status": "skipped", "issues": [], "corrections": 0},
+    }
+
+    if not CRITIC_ENABLED:
+        return
+
+    logger.info("🧐 Stage 3b — Critic Agent: fact-checking the report …")
+    monthly = json.loads(get_monthly_breakdown(ctx, last_n=36))["months"]
+    facts = build_facts_sheet(result.analysis, result.forecast_summary, result.whatif, result.anomalies, monthly)
+    critic = review_report(strat.report, facts)
+    result.agent["qa"] = critic.to_dict()
+    if critic.status == "corrected" and critic.revised_report:
+        result.agent["original_report"] = strat.report
+        result.recommendations = critic.revised_report
+        logger.info("  ✔ Critic corrected %d claim(s)", len(critic.issues))
+    elif critic.status == "corrected":
+        logger.info("  ✔ Critic flagged %d claim(s); original kept", len(critic.issues))
+    else:
+        logger.info("  ✔ Critic: %s", critic.status)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +342,8 @@ def run_pipeline(
     skip_recommendations: bool = False,
     date_column: str | None = None,
     revenue_column: str | None = None,
+    regressor_column: str | None = None,
+    language: str | None = None,
 ) -> PipelineResult:
     """
     Execute the full multi-agent pipeline end-to-end.
@@ -259,7 +353,9 @@ def run_pipeline(
 
         1. **Data Agent** — column detection, cleaning, statistical analysis.
         2. **Forecast Agent** — Prophet-based revenue forecasting.
-        3. **Recommendation Agent** — GPT-powered strategic recommendations.
+        2b. **Anomaly Agent** — outlier days/months from model residuals.
+        3. **Strategist Agent** — tool-using LLM writes the strategy report.
+        3b. **Critic Agent** — fact-checks the report against the numbers.
 
     Args:
         file_path: Path to a CSV or Excel file to analyse.
@@ -271,6 +367,9 @@ def run_pipeline(
             pipeline still succeeds and ``recommendations_error`` is set.
         date_column: Explicit date column; overrides auto-detection.
         revenue_column: Explicit revenue column; overrides auto-detection.
+        regressor_column: Optional numeric driver column used as a Prophet
+            regressor for what-if scenarios (e.g. ``marketing_spend``).
+        language: Language for the AI report (e.g. "Spanish"). Default English.
 
     Returns:
         A :class:`PipelineResult` containing outputs from every stage.
@@ -306,6 +405,7 @@ def run_pipeline(
             result,
             date_column=date_column,
             revenue_column=revenue_column,
+            regressor_column=regressor_column,
         )
 
         # ------------------------------------------------------------------
@@ -316,13 +416,19 @@ def run_pipeline(
             result,
             periods=periods,
             frequency=frequency,
+            regressor_column=regressor_column,
         )
 
         # ------------------------------------------------------------------
-        # Stage 3: Recommendation Agent (optional)
+        # Stage 2b: Anomaly Agent
+        # ------------------------------------------------------------------
+        _run_anomaly_stage(result)
+
+        # ------------------------------------------------------------------
+        # Stage 3: Strategist + Critic (optional)
         # ------------------------------------------------------------------
         if not skip_recommendations:
-            _run_recommendation_stage(result)
+            _run_recommendation_stage(result, language=language)
 
         result.success = True
         logger.info("✅ Pipeline completed successfully")

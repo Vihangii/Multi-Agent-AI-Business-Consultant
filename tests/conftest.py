@@ -39,3 +39,13 @@ def daily_csv_bytes(daily_df) -> bytes:
     buf = io.StringIO()
     daily_df.to_csv(buf, index=False)
     return buf.getvalue().encode("utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Each test starts with a fresh token bucket so the suite never rate-limits itself."""
+    from backend import observability
+
+    observability.rate_limiter.reset()
+    yield
+    observability.rate_limiter.reset()

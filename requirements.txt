@@ -1,6 +1,7 @@
-# API / pipeline only. This is what Vercel installs into the serverless
-# function, so keep it minimal (250 MB unzipped limit).
+# API / pipeline. This is what Vercel installs into the serverless function,
+# so keep it minimal (250 MB unzipped limit).
 fastapi==0.115.6
+uvicorn==0.34.0
 python-dotenv==1.0.1
 python-multipart==0.0.20
 httpx==0.28.1
@@ -16,3 +17,7 @@ cmdstanpy==1.2.5
 openpyxl==3.1.5
 
 openai==1.58.1
+anthropic==1.7.0
+
+# Optional: error tracking (enabled when SENTRY_DSN is set)
+sentry-sdk[fastapi]==2.19.2

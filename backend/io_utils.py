@@ -1,7 +1,6 @@
 """
-Shared upload parsing used by both the FastAPI endpoints and the Streamlit
-dashboard (in built-in mode), so a file is interpreted the same way no matter
-which entry point receives it.
+Shared upload parsing and inspection for the API endpoints: validation,
+CSV/Excel parsing, allow-listed remote download and column inspection.
 """
 
 import io
@@ -11,7 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 import pandas as pd
 
-from backend.agents.data_agent import find_date_column, find_revenue_column
+from backend.agents.data_agent import find_date_column, find_revenue_column, numeric_columns
 from backend.config import FILE_URL_ALLOWED_HOSTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 
 ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xls")
@@ -58,11 +57,15 @@ def parse_upload(filename: str, content: bytes) -> pd.DataFrame:
 
 def inspect_dataframe(df: pd.DataFrame) -> dict:
     """Column names, auto-detection result and a short preview of a DataFrame."""
+    date_col = find_date_column(df)
+    revenue_col = find_revenue_column(df)
     return {
         "columns": [str(c) for c in df.columns],
         "row_count": int(len(df)),
-        "detected_date_column": find_date_column(df),
-        "detected_revenue_column": find_revenue_column(df),
+        "detected_date_column": date_col,
+        "detected_revenue_column": revenue_col,
+        # Candidates for a what-if driver column (numeric, not date/revenue)
+        "numeric_columns": numeric_columns(df, exclude=tuple(c for c in (date_col, revenue_col) if c)),
         "preview": df.head(5).astype(str).to_dict(orient="records"),
     }
 
