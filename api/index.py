@@ -12,16 +12,45 @@ original one, so the wrapper below strips that prefix before FastAPI routes
 the request. `/api/index/health` and `/health` both work; the original
 path is also honoured when Vercel provides it in `x-vercel-original-path`.
 
+If the backend fails to import (missing dependency, platform quirk), the
+function still starts and every request returns a JSON diagnosis with the
+traceback — much easier to act on than Vercel's generic
+FUNCTION_INVOCATION_FAILED page.
+
 Everything else — CORS, the 25 MB cap, optional X-API-Key auth, lazy LLM
 provider check, RecommendationError → recommendations_error — lives in
 backend/main.py and the agents, unchanged from the container deployment.
 """
 
+import json
+import os
+import platform
+import sys
+import traceback
 from urllib.parse import unquote
 
-from backend.main import app as fastapi_app
-
 _PREFIX = "/api/index"
+
+_import_error: dict | None = None
+try:
+    from backend.main import app as fastapi_app
+except Exception as exc:  # noqa: BLE001 — we want to report anything
+    _import_error = {
+        "error": "backend failed to import",
+        "type": type(exc).__name__,
+        "message": str(exc),
+        "traceback": traceback.format_exc().splitlines()[-25:],
+        "python": sys.version,
+        "platform": platform.platform(),
+        "cwd": os.getcwd(),
+        "sys_path_head": sys.path[:5],
+        "hint": (
+            "Check the build log for the failing package. Common causes: PIP_COMPILE not set "
+            "(bundle over 250 MB), a wheel without a manylinux build for this Python version, "
+            "or a missing environment variable."
+        ),
+    }
+    fastapi_app = None
 
 
 def _rewrite_path(scope: dict) -> dict:
@@ -49,5 +78,37 @@ def _rewrite_path(scope: dict) -> dict:
     return scope
 
 
+async def _send_json(send, status: int, payload: dict) -> None:
+    body = json.dumps(payload, indent=2).encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 async def app(scope, receive, send):  # ASGI callable Vercel looks for
-    await fastapi_app(_rewrite_path(scope), receive, send)
+    if scope.get("type") == "lifespan":
+        # Nothing to start up; acknowledge so the runtime doesn't wait
+        while True:
+            msg = await receive()
+            if msg["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif msg["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+
+    if fastapi_app is None:
+        await _send_json(send, 500, _import_error)
+        return
+
+    try:
+        await fastapi_app(_rewrite_path(scope), receive, send)
+    except Exception as exc:  # noqa: BLE001 — surface request-time crashes too
+        await _send_json(send, 500, {
+            "error": "unhandled exception in backend",
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc().splitlines()[-25:],
+        })
