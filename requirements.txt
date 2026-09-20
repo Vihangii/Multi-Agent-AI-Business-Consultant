@@ -1,22 +1,18 @@
-# === Backend (FastAPI) ===
+# API / pipeline only. This is what Vercel installs into the serverless
+# function, so keep it minimal (250 MB unzipped limit).
 fastapi==0.115.6
-uvicorn==0.34.0
 python-dotenv==1.0.1
 python-multipart==0.0.20
+httpx==0.28.1
 
-# === Data & ML ===
 pandas==2.2.3
 numpy==1.26.4
-scikit-learn==1.5.2
 prophet==1.1.6
+# cmdstanpy 1.3+ rejects the CmdStan binary bundled with prophet 1.1.6
+cmdstanpy==1.2.5
+# Empty stand-in for prophet's optional plotting dependency (saves ~90 MB).
+# See vendor/matplotlib-stub/README.md. Remove this line to get real matplotlib.
+./vendor/matplotlib-99.0.0-py3-none-any.whl
+openpyxl==3.1.5
 
-# === Visualization ===
-plotly==5.24.1
-matplotlib==3.9.3
-
-# === AI ===
 openai==1.58.1
-
-# === Frontend (Streamlit) ===
-streamlit==1.41.1
-requests==2.32.3

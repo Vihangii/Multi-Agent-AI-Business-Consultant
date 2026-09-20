@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-streamlit.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          # Placeholder so config loads; stage 3 is mocked/skipped in tests
+          OPENAI_API_KEY: sk-your-placeholder
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ai-business-consultant .
+      - name: Smoke-test API container
+        run: |
+          docker run -d --name api -p 8000:8000 -e OPENAI_API_KEY=sk-your-placeholder ai-business-consultant
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health && exit 0
+            sleep 2
+          done
+          echo "backend did not become healthy"; docker logs api; exit 1
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.example.com
+
+  vercel-bundle:
+    # Vercel Python functions must stay under 250 MB unzipped. Fail early if the
+    # API dependency set grows past that (measured the way Vercel installs it).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install API requirements into a bundle dir
+        env:
+          PIP_NO_COMPILE: "1"
+        run: |
+          python -m pip install --disable-pip-version-check --target bundle -r requirements.txt
+          cp -r backend api vendor bundle/
+      - name: Check size
+        run: |
+          size=$(du -sm bundle | cut -f1)
+          echo "Vercel function bundle: ${size} MB (limit 250)"
+          test "$size" -lt 240
+      - name: Smoke-import the function entry point
+        run: cd bundle && python -c "from api.index import app; print(app.title)"

@@ -17,7 +17,10 @@ from backend.agents.data_agent import (
     find_revenue_column,
 )
 from backend.agents.forecast_agent import forecast_revenue
-from backend.agents.recommendation_agent import generate_recommendations
+from backend.agents.recommendation_agent import (
+    RecommendationError,
+    generate_recommendations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,7 @@ class PipelineResult:
         # Stage 1: Data Agent outputs
         self.raw_row_count: int = 0
         self.cleaned_row_count: int = 0
+        self.columns: list[str] = []
         self.date_column: str | None = None
         self.revenue_column: str | None = None
         self.cleaned_df: pd.DataFrame | None = None
@@ -47,6 +51,7 @@ class PipelineResult:
 
         # Stage 3: Recommendation Agent outputs
         self.recommendations: str | None = None
+        self.recommendations_error: str | None = None
 
         # Metadata
         self.elapsed_seconds: float = 0.0
@@ -62,6 +67,9 @@ class PipelineResult:
         if self.analysis is not None:
             result["analysis"] = self.analysis
 
+        if self.cleaned_df is not None:
+            result["cleaned_data"] = self.cleaned_df.to_dict(orient="records")
+
         if self.forecast_summary is not None:
             result["forecast_summary"] = self.forecast_summary
 
@@ -70,8 +78,11 @@ class PipelineResult:
 
         if self.recommendations is not None:
             result["recommendations"] = self.recommendations
+        if self.recommendations_error is not None:
+            result["recommendations_error"] = self.recommendations_error
 
         # Include metadata about data processing/detection
+        result["columns"] = self.columns
         result["date_column"] = self.date_column
         result["revenue_column"] = self.revenue_column
         result["raw_row_count"] = self.raw_row_count
@@ -84,13 +95,20 @@ class PipelineResult:
 # Individual pipeline stages
 # ---------------------------------------------------------------------------
 
-def _run_data_stage(df: pd.DataFrame, result: PipelineResult) -> pd.DataFrame:
+def _run_data_stage(
+    df: pd.DataFrame,
+    result: PipelineResult,
+    date_column: str | None = None,
+    revenue_column: str | None = None,
+) -> pd.DataFrame:
     """
     Stage 1 — Data Agent: detect columns, clean data, and compute statistics.
 
     Args:
         df: Raw DataFrame loaded from the user's file.
         result: PipelineResult being populated.
+        date_column: Explicit date column name; auto-detected if None.
+        revenue_column: Explicit revenue column name; auto-detected if None.
 
     Returns:
         Cleaned DataFrame ready for forecasting.
@@ -102,9 +120,19 @@ def _run_data_stage(df: pd.DataFrame, result: PipelineResult) -> pd.DataFrame:
     logger.info("🔍 Stage 1/3 — Data Agent: analysing uploaded data …")
 
     result.raw_row_count = len(df)
+    result.columns = [str(c) for c in df.columns]
 
-    # Detect columns
-    date_col = find_date_column(df)
+    # Use caller-supplied columns when given, otherwise detect
+    for name, label in ((date_column, "date"), (revenue_column, "revenue")):
+        if name is not None and name not in df.columns:
+            raise ValueError(
+                f"The {label} column '{name}' does not exist in the dataset. "
+                f"Available columns: {', '.join(result.columns)}"
+            )
+    if date_column is not None and date_column == revenue_column:
+        raise ValueError("The date column and revenue column must be different.")
+
+    date_col = date_column if date_column is not None else find_date_column(df)
     if date_col is None:
         raise ValueError(
             "Could not detect a date column. "
@@ -112,7 +140,7 @@ def _run_data_stage(df: pd.DataFrame, result: PipelineResult) -> pd.DataFrame:
             "(e.g. 'date', 'order_date', 'timestamp')."
         )
 
-    revenue_col = find_revenue_column(df)
+    revenue_col = revenue_column if revenue_column is not None else find_revenue_column(df)
     if revenue_col is None:
         raise ValueError(
             "Could not detect a revenue/sales column. "
@@ -196,13 +224,17 @@ def _run_recommendation_stage(result: PipelineResult) -> None:
     """
     logger.info("🤖 Stage 3/3 — Recommendation Agent: generating insights …")
 
-    recommendations = generate_recommendations(
-        analysis=result.analysis,
-        forecast_summary=result.forecast_summary,
-    )
-
-    result.recommendations = recommendations
-    logger.info("  ✔ Recommendations generated")
+    try:
+        result.recommendations = generate_recommendations(
+            analysis=result.analysis,
+            forecast_summary=result.forecast_summary,
+        )
+        logger.info("  ✔ Recommendations generated")
+    except RecommendationError as exc:
+        # Stages 1-2 are still valuable; surface the failure instead of
+        # failing the whole pipeline or passing an error string off as a report.
+        result.recommendations_error = str(exc)
+        logger.warning("  ✖ Recommendations skipped: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +248,8 @@ def run_pipeline(
     periods: int | None = None,
     frequency: str | None = None,
     skip_recommendations: bool = False,
+    date_column: str | None = None,
+    revenue_column: str | None = None,
 ) -> PipelineResult:
     """
     Execute the full multi-agent pipeline end-to-end.
@@ -233,7 +267,10 @@ def run_pipeline(
         periods: Optional forecast horizon override.
         frequency: Optional forecast frequency override ('D', 'W', 'MS').
         skip_recommendations: If ``True``, skip Stage 3 (useful for testing
-            without an OpenAI API key).
+            without an OpenAI API key). If Stage 3 runs but fails, the
+            pipeline still succeeds and ``recommendations_error`` is set.
+        date_column: Explicit date column; overrides auto-detection.
+        revenue_column: Explicit revenue column; overrides auto-detection.
 
     Returns:
         A :class:`PipelineResult` containing outputs from every stage.
@@ -264,7 +301,12 @@ def run_pipeline(
         # ------------------------------------------------------------------
         # Stage 1: Data Agent
         # ------------------------------------------------------------------
-        cleaned_df = _run_data_stage(raw_df, result)
+        cleaned_df = _run_data_stage(
+            raw_df,
+            result,
+            date_column=date_column,
+            revenue_column=revenue_column,
+        )
 
         # ------------------------------------------------------------------
         # Stage 2: Forecast Agent

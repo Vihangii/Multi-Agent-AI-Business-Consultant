@@ -4,13 +4,42 @@ Uses OpenAI GPT-4o-mini to generate actionable business recommendations
 based on data analysis and forecast results.
 """
 
-import json
+import logging
+
 from openai import OpenAI
-from backend.config import OPENAI_API_KEY, OPENAI_MODEL
+
+from backend.config import OPENAI_MODEL, require_openai_key
+
+logger = logging.getLogger(__name__)
 
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+class RecommendationError(Exception):
+    """Raised when the recommendation stage cannot produce a report."""
+
+
+_client: OpenAI | None = None
+
+
+def _get_client() -> OpenAI:
+    """Create the OpenAI client on first use so importing this module never needs a key."""
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=require_openai_key())
+    return _client
+
+
+def _money(value) -> str:
+    """Format a number as $1,234.56; pass non-numeric values (e.g. 'N/A') through."""
+    if isinstance(value, (int, float)):
+        return f"${value:,.2f}"
+    return str(value)
+
+
+def _pct(value) -> str:
+    """Format a number as 12.34%; pass non-numeric values through."""
+    if isinstance(value, (int, float)):
+        return f"{value:.2f}%"
+    return str(value)
 
 SYSTEM_PROMPT = """You are an elite business strategy consultant with 20+ years of experience 
 advising Fortune 500 companies. You specialize in data-driven decision making, revenue optimization, 
@@ -62,6 +91,7 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
     Returns:
         Formatted prompt string.
     """
+    rev = analysis.get("revenue", {})
     prompt = f"""Analyze the following business data and provide your strategic recommendations.
 
 --- DATA ANALYSIS RESULTS ---
@@ -70,12 +100,12 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
 📋 Total Records: {analysis.get('total_records', 'N/A')}
 
 💰 Revenue Statistics:
-  - Total Revenue: ${analysis.get('revenue', {}).get('total', 'N/A'):,.2f}
-  - Average: ${analysis.get('revenue', {}).get('mean', 'N/A'):,.2f}
-  - Median: ${analysis.get('revenue', {}).get('median', 'N/A'):,.2f}
-  - Std Deviation: ${analysis.get('revenue', {}).get('std_dev', 'N/A'):,.2f}
-  - Min: ${analysis.get('revenue', {}).get('min', 'N/A'):,.2f}
-  - Max: ${analysis.get('revenue', {}).get('max', 'N/A'):,.2f}
+  - Total Revenue: {_money(rev.get('total', 'N/A'))}
+  - Average: {_money(rev.get('mean', 'N/A'))}
+  - Median: {_money(rev.get('median', 'N/A'))}
+  - Std Deviation: {_money(rev.get('std_dev', 'N/A'))}
+  - Min: {_money(rev.get('min', 'N/A'))}
+  - Max: {_money(rev.get('max', 'N/A'))}
 """
 
     # Growth metrics
@@ -83,7 +113,7 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
     if growth:
         prompt += f"""
 📈 Growth:
-  - Overall Growth: {growth.get('overall_percent', 'N/A')}%
+  - Overall Growth: {_pct(growth.get('overall_percent', 'N/A'))}
   - Direction: {growth.get('direction', 'N/A')}
 """
 
@@ -92,9 +122,9 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
     if monthly:
         prompt += f"""
 📆 Monthly Performance:
-  - Best Month: {monthly.get('best_month', 'N/A')} (${monthly.get('best_month_revenue', 0):,.2f})
-  - Worst Month: {monthly.get('worst_month', 'N/A')} (${monthly.get('worst_month_revenue', 0):,.2f})
-  - Avg Monthly Revenue: ${monthly.get('avg_monthly_revenue', 0):,.2f}
+  - Best Month: {monthly.get('best_month', 'N/A')} ({_money(monthly.get('best_month_revenue', 0))})
+  - Worst Month: {monthly.get('worst_month', 'N/A')} ({_money(monthly.get('worst_month_revenue', 0))})
+  - Avg Monthly Revenue: {_money(monthly.get('avg_monthly_revenue', 0))}
 """
 
     # Volatility
@@ -102,24 +132,25 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
     if volatility:
         prompt += f"""
 📊 Volatility:
-  - Avg Monthly Change: {volatility.get('avg_monthly_change_percent', 'N/A')}%
-  - Max Monthly Drop: {volatility.get('max_monthly_drop_percent', 'N/A')}%
-  - Max Monthly Spike: {volatility.get('max_monthly_spike_percent', 'N/A')}%
+  - Avg Monthly Change: {_pct(volatility.get('avg_monthly_change_percent', 'N/A'))}
+  - Max Monthly Drop: {_pct(volatility.get('max_monthly_drop_percent', 'N/A'))}
+  - Max Monthly Spike: {_pct(volatility.get('max_monthly_spike_percent', 'N/A'))}
 """
 
     # Forecast summary
+    ci = forecast_summary.get("confidence_interval", {})
     prompt += f"""
---- FORECAST RESULTS (6-Month Outlook) ---
+--- FORECAST RESULTS ({forecast_summary.get('forecast_periods', '?')} x '{forecast_summary.get('forecast_frequency', '?')}' periods) ---
 
 🔮 Forecast Details:
   - Data Granularity: {forecast_summary.get('data_granularity', 'N/A')}
-  - Last Actual Value: ${forecast_summary.get('last_actual_value', 0):,.2f} ({forecast_summary.get('last_actual_date', 'N/A')})
-  - Forecast End Value: ${forecast_summary.get('forecast_end_value', 0):,.2f} ({forecast_summary.get('forecast_end_date', 'N/A')})
-  - Predicted Growth: {forecast_summary.get('predicted_growth_percent', 'N/A')}%
+  - Last Actual Value: {_money(forecast_summary.get('last_actual_value', 0))} ({forecast_summary.get('last_actual_date', 'N/A')})
+  - Forecast End Value: {_money(forecast_summary.get('forecast_end_value', 0))} ({forecast_summary.get('forecast_end_date', 'N/A')})
+  - Predicted Growth: {_pct(forecast_summary.get('predicted_growth_percent', 'N/A'))}
   - Trend: {forecast_summary.get('forecast_trend', 'N/A')}
-  - Confidence Range: ${forecast_summary.get('confidence_interval', {}).get('lower', 0):,.2f} to ${forecast_summary.get('confidence_interval', {}).get('upper', 0):,.2f}
-  - Avg Forecasted Value: ${forecast_summary.get('avg_forecasted_value', 0):,.2f}
-  - Peak Forecast: ${forecast_summary.get('peak_forecasted_value', 0):,.2f} ({forecast_summary.get('peak_forecasted_date', 'N/A')})
+  - Confidence Range: {_money(ci.get('lower', 0))} to {_money(ci.get('upper', 0))}
+  - Avg Forecasted Value: {_money(forecast_summary.get('avg_forecasted_value', 0))}
+  - Peak Forecast: {_money(forecast_summary.get('peak_forecasted_value', 0))} ({forecast_summary.get('peak_forecasted_date', 'N/A')})
 
 Based on this data, provide your comprehensive strategic analysis and recommendations."""
 
@@ -135,12 +166,18 @@ def generate_recommendations(analysis: dict, forecast_summary: dict) -> str:
         forecast_summary: Dictionary from forecast_agent.forecast_revenue()['summary'].
 
     Returns:
-        Formatted string of business recommendations.
+        Formatted markdown string of business recommendations.
 
     Raises:
-        Exception: If the OpenAI API call fails.
+        RecommendationError: If no API key is configured, the API call fails,
+            or the model returns an empty response.
     """
     user_prompt = _build_user_prompt(analysis, forecast_summary)
+
+    try:
+        client = _get_client()
+    except ValueError as e:
+        raise RecommendationError(str(e)) from e
 
     try:
         response = client.chat.completions.create(
@@ -153,12 +190,12 @@ def generate_recommendations(analysis: dict, forecast_summary: dict) -> str:
             max_tokens=2500,
             top_p=0.9,
         )
-
-        recommendations = response.choices[0].message.content
-        return recommendations
-
     except Exception as e:
-        return (
-            f"⚠️ Error generating recommendations: {str(e)}\n\n"
-            "Please check your OpenAI API key and try again."
-        )
+        logger.error("OpenAI request failed: %s", e)
+        raise RecommendationError(f"OpenAI request failed: {e}") from e
+
+    recommendations = response.choices[0].message.content
+    if not recommendations or not recommendations.strip():
+        raise RecommendationError("OpenAI returned an empty response.")
+
+    return recommendations

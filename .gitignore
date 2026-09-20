@@ -1,6 +1,7 @@
 # === Environment ===
 .env
 .env.*
+!.env.example
 
 # === Python ===
 __pycache__/
@@ -35,3 +36,20 @@ Thumbs.db
 
 # === Logs ===
 *.log
+
+# === Test / tooling ===
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Vercel / Node ===
+.vercel/
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# === Build artefacts from the matplotlib stub ===
+vendor/matplotlib-stub/build/
+vendor/matplotlib-stub/*.egg-info/
