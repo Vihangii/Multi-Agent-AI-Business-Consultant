@@ -384,3 +384,68 @@ input[type="range"] {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Preloader (first paint on load/refresh)
+   --------------------------------------------------------------------------- */
+@keyframes pl-tile {
+  0% { transform: scale(0.6) rotate(-8deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+@keyframes pl-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes pl-dot {
+  0% { transform: scale(0); opacity: 0; }
+  70% { transform: scale(1.4); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes pl-ring {
+  0% { transform: scale(0.8); opacity: 0; }
+  40% { opacity: 0.8; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@keyframes pl-bar {
+  0% { transform: translateX(-100%); }
+  60% { transform: translateX(-15%); }
+  100% { transform: translateX(0); }
+}
+@keyframes pl-out {
+  to { opacity: 0; transform: scale(1.02); }
+}
+.preloader {
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.preloader-out {
+  animation: pl-out 0.55s ease forwards;
+  pointer-events: none;
+}
+.preloader-tile {
+  transform-origin: 32px 32px;
+  animation: pl-tile 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.preloader-line {
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: pl-draw 0.7s cubic-bezier(0.4, 0, 0.2, 1) 0.45s forwards;
+}
+.preloader-dot {
+  transform-origin: 48px 20px;
+  animation: pl-dot 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) 1.05s both;
+}
+.preloader-ring {
+  animation: pl-ring 1.6s ease-out 0.3s infinite;
+}
+.preloader-text {
+  animation: fade-up 0.5s ease-out 0.5s both;
+}
+.preloader-bar {
+  animation: pl-bar 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) 0.2s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .preloader-tile, .preloader-line, .preloader-dot, .preloader-ring, .preloader-text, .preloader-bar, .preloader-out {
+    animation: none !important;
+  }
+  .preloader-line { stroke-dasharray: none; stroke-dashoffset: 0; }
+  .preloader-out { opacity: 0; }
+}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import type { HealthResult } from "@/lib/types";
+import { Preloader } from "./Preloader";
 import { Badge, Icon } from "./ui";
 
 export function Logo({ size = 28 }: { size?: number }) {
@@ -146,6 +147,7 @@ export function AppShell({
 }) {
   return (
     <div className="flex min-h-screen flex-col bg-page text-text" data-theme={dark ? "dark" : undefined}>
+      <Preloader />
       <header className="sticky top-0 z-30 border-b border-border bg-surface/85 backdrop-blur supports-[backdrop-filter]:bg-surface/70">
         <div className={`flex h-14 items-center gap-3 px-4 ${fullBleed ? "" : "mx-auto max-w-7xl"}`}>
           {onToggleSidebar && (
