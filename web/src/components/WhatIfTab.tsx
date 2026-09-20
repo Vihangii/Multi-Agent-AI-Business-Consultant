@@ -145,7 +145,7 @@ export function WhatIfTab({ result }: { result: AnalyzeResult }) {
                 formatter={(v) => fmtMoney(Number(v))}
               />
               <Legend verticalAlign="top" align="right" iconType="plainline" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
-              <Line name="Baseline" dataKey="baseline" stroke="var(--series-forecast)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line name="Baseline" dataKey="baseline" stroke="var(--series-forecast)" strokeWidth={2} dot={false} isAnimationActive animationDuration={700} />
               <Line
                 name={`Scenario ${pct > 0 ? "+" : ""}${pct}%`}
                 dataKey="scenario"
@@ -153,7 +153,8 @@ export function WhatIfTab({ result }: { result: AnalyzeResult }) {
                 strokeWidth={2}
                 strokeDasharray={pct === 0 ? "2 4" : undefined}
                 dot={false}
-                isAnimationActive={false}
+                isAnimationActive
+                animationDuration={500}
               />
             </LineChart>
           </ResponsiveContainer>

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { CountUp } from "./motion";
 
 // ---------------------------------------------------------------------------
 // Layout primitives
@@ -133,7 +134,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${variantClass[variant]} ${sizeClass} ${className}`}
+      className={`press inline-flex items-center justify-center gap-2 rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${variantClass[variant]} ${sizeClass} ${className}`}
       {...rest}
     >
       {children}
@@ -197,7 +198,9 @@ export function Metric({
   return (
     <div className="rounded-xl border border-border bg-surface-2/60 px-4 py-3.5">
       <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</div>
-      <div className={`mt-1.5 text-[26px] font-semibold leading-none tracking-tight tabular ${color}`}>{value}</div>
+      <div className={`mt-1.5 text-[26px] font-semibold leading-none tracking-tight tabular ${color}`}>
+        <CountUp value={value} />
+      </div>
       {hint && <div className="mt-2 text-xs text-muted">{hint}</div>}
     </div>
   );
@@ -268,7 +271,7 @@ export function Stepper({
                     : "border-border bg-surface-2 text-muted"
               }`}
             >
-              {done ? <Icon name="check" size={12} /> : isActive ? <Spinner className="h-3 w-3" /> : <span className="tabular">{i + 1}</span>}
+              {done ? <span className="animate-pop inline-flex"><Icon name="check" size={12} /></span> : isActive ? <Spinner className="h-3 w-3" /> : <span className="tabular">{i + 1}</span>}
               {s.label}
             </span>
             {i < steps.length - 1 && <span className="h-px w-3 bg-border" aria-hidden />}

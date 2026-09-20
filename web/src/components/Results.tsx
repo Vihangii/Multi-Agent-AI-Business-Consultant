@@ -71,13 +71,14 @@ export function Results({
         ))}
       </div>
 
-      {tab === "dashboard" && <DashboardTab result={result} />}
-      {tab === "forecast" && <ForecastTab result={result} />}
-      {tab === "whatif" && <WhatIfTab result={result} />}
-      {tab === "report" && (
-        <ReportTab result={result} skipRecommendations={skipRecommendations} />
-      )}
-      {tab === "data" && <DataTab result={result} />}
+      {/* key on tab so each switch re-runs the entrance animation */}
+      <div key={tab} className="stagger">
+        {tab === "dashboard" && <DashboardTab result={result} />}
+        {tab === "forecast" && <ForecastTab result={result} />}
+        {tab === "whatif" && <WhatIfTab result={result} />}
+        {tab === "report" && <ReportTab result={result} skipRecommendations={skipRecommendations} />}
+        {tab === "data" && <DataTab result={result} />}
+      </div>
     </div>
   );
 }
@@ -94,10 +95,10 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
   const fGrowth = fs.predicted_growth_percent;
 
   return (
-    <div className="space-y-4">
+    <div className="stagger space-y-4">
       <Card>
         <SectionTitle>Key performance indicators</SectionTitle>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Total Revenue" value={fmtMoney(a.revenue.total)} hint="Dataset cumulative revenue" />
           <Metric
             label={avgMonthly ? "Avg Monthly" : "Avg Per Record"}
@@ -198,7 +199,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
   const acc = fs.accuracy;
 
   return (
-    <div className="space-y-4">
+    <div className="stagger space-y-4">
       <Card>
         <SectionTitle hint="Actuals, Prophet forecast and 95% interval; anomalies ringed in red">Revenue projection</SectionTitle>
         <ForecastChart
