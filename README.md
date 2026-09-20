@@ -1,20 +1,23 @@
 # Multi-Agent AI Business Consultant
 
 Upload a sales/revenue spreadsheet and get back a cleaned dataset, a Prophet
-revenue forecast with what-if scenarios, and a GPT-written strategic report —
-exportable as PDF or PowerPoint, and re-runnable monthly by email.
+revenue forecast with what-if scenarios, and an LLM-written, fact-checked
+strategy report — exportable as PDF or PowerPoint, and re-runnable monthly by email.
 
 ```
-CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendation Agent ──▶ Web app
-                (pandas)        (Prophet)          (OpenAI)                (Next.js)
+CSV / Excel ─▶ Data Agent ─▶ Forecast Agent ─▶ Anomaly Agent ─▶ Strategist Agent ─▶ Critic Agent ─▶ Web app
+               (pandas)       (Prophet)         (residual z)     (LLM + tools)       (LLM QA)        (Next.js)
 ```
 
 | Part | Module | What it does |
 |---|---|---|
 | 1. Data Agent | `backend/agents/data_agent.py` | Detects the date and revenue columns (whole-word, priority-ranked matching), parses currency strings, aggregates duplicate dates, computes growth / monthly / volatility stats, carries an optional driver column |
 | 2. Forecast Agent | `backend/agents/forecast_agent.py` | Auto-detects daily / weekly / monthly granularity, fits Prophet (optionally with a driver column as a regressor), returns a ~6-month forecast with 95% intervals, backtests itself (MAPE / MAE / coverage) and precomputes what-if scenarios |
-| 3. Recommendation Agent | `backend/agents/recommendation_agent.py` | Sends stats + forecast + scenarios to OpenAI and returns a markdown strategy report in the requested language |
-| Orchestrator | `backend/orchestrator.py` | Runs the three stages and packages the result; a stage-3 failure never fails the run |
+| 3. Anomaly Agent | `backend/agents/anomaly_agent.py` | Robust z-scores on Prophet residuals flag days that collapsed or spiked; month-over-month shocks are flagged too. Fed to the strategist as "explain or exclude?" |
+| 4. Strategist Agent | `backend/agents/recommendation_agent.py` + `strategist_tools.py` | Tool-using LLM: calls `get_monthly_breakdown`, `get_top_periods`, `compare_periods`, `get_weekday_profile`, `get_anomalies`, `what_if` to query the data, then writes the report in the requested language. Falls back to a single static prompt for models without tool support |
+| 5. Critic Agent | `backend/agents/critic_agent.py` | Second LLM pass: audits every figure in the report against a facts sheet ("claimed 12% growth; data says 8.7%"), rewrites wrong claims, and reports the corrections. Never blocks delivery |
+| LLM providers | `backend/llm.py` | One interface, three providers: OpenAI, Anthropic (Claude), Ollama (local). `LLM_PROVIDER=auto` picks whichever has credentials |
+| Orchestrator | `backend/orchestrator.py` | Runs the stages and packages the result; an LLM failure never fails the run |
 | API | `backend/main.py` | `GET /health`, `GET /metrics`, `POST /inspect`, `POST /analyze` |
 | Observability | `backend/observability.py` | Request ids + access log (text/JSON), Prometheus metrics, rate limiting, optional Sentry |
 | Vercel entry | `api/index.py` | The same FastAPI app as a Vercel serverless function |
@@ -26,6 +29,10 @@ CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendati
 - **Forecast** with Prophet; frequency override (auto / D / W / MS) and horizon slider
 - **Backtest accuracy**: MAPE, MAE, 95% interval coverage, plain-language rating
 - **What-if scenarios**: pick a numeric driver column (e.g. `marketing_spend`); the model is fit with it as a Prophet regressor and re-predicted at −30…+50% so a slider shows the learned revenue response. Without a driver, scenarios are a labelled plain uplift
+- **Anomaly detection** on model residuals, shown on the chart and in a table, and handed to the strategist
+- **Tool-using strategist**: the LLM queries the data (monthly breakdown, comparisons, weekday profile, what-if) before writing; every tool call is shown as an "agent activity" trace
+- **Critic / QA pass**: a second model checks every number against the data and corrects the report; corrections are listed in the UI and noted in exports
+- **Provider choice**: OpenAI, Anthropic Claude, or a local Ollama model — swap with one env var, demo fully offline
 - **AI strategy report** in 14 languages, with "Skip AI Recommendations" for offline use
 - **Export** the whole analysis as **PDF** (vector chart) or **PowerPoint** (native editable chart), or the report as Markdown
 - **Monthly email**: schedule a re-run on the 1st of each month via Vercel Cron + Resend, with unsubscribe links
@@ -36,8 +43,10 @@ CSV / Excel ──▶ Data Agent ──▶ Forecast Agent ──▶ Recommendati
 
 - Python **3.12** (3.13/3.14 don't yet have wheels for the pinned Prophet/NumPy)
 - Node **20+** for the web app
-- An OpenAI API key — **optional**. Without one, stages 1–2 still run; tick
-  *Skip AI Recommendations* in the UI or pass `skip_recommendations=true`.
+- An LLM — **optional**: an OpenAI or Anthropic API key, or a local
+  [Ollama](https://ollama.com) model (`OLLAMA_MODEL=llama3.1`) for a fully
+  offline demo. Without one, stages 1–3 still run; tick *Skip AI
+  Recommendations* in the UI or pass `skip_recommendations=true`.
 
 ## Quick start
 
@@ -72,8 +81,13 @@ Backend (`.env`, see `.env.example`):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | – | Enables stage 3. Leave the placeholder to run without it |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Chat model used for recommendations |
+| `LLM_PROVIDER` | `auto` | `auto` (anthropic, then openai, then ollama by available credentials), `openai`, `anthropic` or `ollama` |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4o-mini` | OpenAI credentials and model |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | – / `claude-opus-5` | Anthropic credentials and model |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / – | Local Ollama server and model (set the model to enable) |
+| `STRATEGIST_MODE` | `tools` | `tools` (function-calling agent) or `static` (single prompt) |
+| `AGENT_MAX_TOOL_ROUNDS` | `6` | Cap on tool-calling rounds before the agent must answer |
+| `CRITIC_ENABLED` | `true` | Run the fact-checking pass |
 | `BACKEND_HOST` / `BACKEND_PORT` | `0.0.0.0` / `8000` | Where uvicorn listens |
 | `MAX_UPLOAD_MB` | `25` | Upload size limit |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
@@ -116,7 +130,7 @@ so `/health`, `/inspect`, `/analyze`, `/metrics` and `/docs` are served by
 
 1. Vercel → **New Project** → import this repo → Root Directory: **`/`**.
 2. Environment variables: `PIP_COMPILE=0` (**required** — keeps the bundle
-   at ~193 MB instead of ~253 MB against Vercel's 250 MB limit), `OPENAI_API_KEY`,
+   at ~203 MB instead of ~260 MB against Vercel's 250 MB limit), `OPENAI_API_KEY`,
    `CORS_ORIGINS`, optional `API_KEY`.
 3. Deploy. `/health` should report `"platform": "vercel"`.
 
@@ -156,9 +170,29 @@ curl http://localhost:8000/metrics
 `language`.
 
 The response contains `columns`, `analysis`, `forecast_summary` (with
-`accuracy`), `forecast`, `whatif` (scenario table), `cleaned_data`, and either
-`recommendations` (markdown) or `recommendations_error`. Stage 3 failing never
-fails the request. Every response carries an `X-Request-ID` header.
+`accuracy`), `forecast`, `whatif` (scenario table), `anomalies` (points,
+periods, summary), `cleaned_data`, and either `recommendations` (markdown) plus
+`agent` (provider, model, mode, `tool_calls` trace, `qa` with the critic's
+corrections and the `original_report` if it was rewritten) or
+`recommendations_error`. An LLM failure never fails the request. Every
+response carries an `X-Request-ID` header.
+
+### How the agents work together
+
+1. **Anomaly Agent** compares each historical point with Prophet's in-sample
+   prediction; |robust z| >= 3.5 is flagged, >= 5 is "high".
+2. **Strategist Agent** receives the summary and the anomalies, then decides
+   for itself which tools to call (a typical run: monthly breakdown, anomalies,
+   weekday profile, what-if). Each call is executed against the cleaned data
+   and returned as JSON; up to `AGENT_MAX_TOOL_ROUNDS` rounds, after which it
+   must write the report.
+3. **Critic Agent** gets the report plus a facts sheet (all computed figures,
+   scenarios, anomalies, monthly revenue) and returns `{issues, revised_report}`.
+   Rounding is tolerated; contradictions are rewritten. A truncated or
+   unparseable rewrite keeps the original and marks the QA as unverified.
+
+Every provider goes through the same neutral message/tool interface
+(`backend/llm.py`), so the loop is identical on OpenAI, Claude and Ollama.
 
 ### Input data
 
@@ -192,10 +226,14 @@ backend/
   observability.py        logging, metrics, rate limiting, Sentry
   main.py                 FastAPI app
   orchestrator.py         pipeline runner
+  llm.py                  provider abstraction (OpenAI / Anthropic / Ollama)
   agents/
     data_agent.py
     forecast_agent.py     Prophet + backtest + what-if
-    recommendation_agent.py
+    anomaly_agent.py      residual z-scores, monthly shocks
+    strategist_tools.py   data-query tools for the strategist
+    recommendation_agent.py   strategist (tool loop + static fallback)
+    critic_agent.py       fact-checking pass
 web/                      Next.js app (see web/README.md)
 tests/
 Dockerfile, docker-compose.yml, run.ps1

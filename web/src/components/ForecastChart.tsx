@@ -14,7 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { fmtDate, fmtDateShort, fmtMoney, fmtMoneyCompact } from "@/lib/format";
-import type { CleanedPoint, ForecastPoint } from "@/lib/types";
+import type { AnomalyPoint, CleanedPoint, ForecastPoint } from "@/lib/types";
 
 interface Row {
   t: number; // epoch ms
@@ -23,17 +23,21 @@ interface Row {
   upper: number;
   band: [number, number];
   actual?: number;
+  anomaly?: number; // actual value, only on anomalous days
+  anomalyInfo?: AnomalyPoint;
 }
 
 interface Props {
   forecast: ForecastPoint[];
   actuals: CleanedPoint[];
   lastActualDate: string;
+  anomalies?: AnomalyPoint[];
 }
 
 const SERIES = {
   forecast: "var(--series-forecast)",
   actual: "var(--series-actual)",
+  anomaly: "var(--bad)",
 };
 
 function CustomTooltip({
@@ -63,19 +67,29 @@ function CustomTooltip({
       <div className="mt-1 text-muted">
         95% interval {fmtMoney(r.lower)} – {fmtMoney(r.upper)}
       </div>
+      {r.anomalyInfo && (
+        <div className="mt-1 font-medium text-bad">
+          ⚠ Anomaly: {r.anomalyInfo.direction} of {r.anomalyInfo.deviation_percent?.toFixed(1)}% (z = {r.anomalyInfo.z_score})
+        </div>
+      )}
     </div>
   );
 }
 
-export function ForecastChart({ forecast, actuals, lastActualDate }: Props) {
+export function ForecastChart({ forecast, actuals, lastActualDate, anomalies }: Props) {
   const rows = useMemo<Row[]>(() => {
     const actualByDay = new Map<number, number>();
     for (const a of actuals) {
       actualByDay.set(new Date(a.ds).getTime(), a.y);
     }
+    const anomalyByDay = new Map<number, AnomalyPoint>();
+    for (const a of anomalies ?? []) {
+      anomalyByDay.set(new Date(a.date).getTime(), a);
+    }
     return forecast.map((f) => {
       const t = new Date(f.ds).getTime();
       const lower = Math.max(0, f.lower_bound);
+      const info = anomalyByDay.get(t);
       return {
         t,
         predicted: f.predicted,
@@ -83,9 +97,11 @@ export function ForecastChart({ forecast, actuals, lastActualDate }: Props) {
         upper: f.upper_bound,
         band: [lower, f.upper_bound],
         actual: actualByDay.get(t),
+        anomaly: info ? actualByDay.get(t) : undefined,
+        anomalyInfo: info,
       };
     });
-  }, [forecast, actuals]);
+  }, [forecast, actuals, anomalies]);
 
   const splitT = new Date(lastActualDate).getTime();
 
@@ -154,6 +170,24 @@ export function ForecastChart({ forecast, actuals, lastActualDate }: Props) {
             isAnimationActive={false}
             legendType="circle"
           />
+          {anomalies && anomalies.length > 0 && (
+            <Scatter
+              name="Anomaly"
+              dataKey="anomaly"
+              shape={(p: { cx?: number; cy?: number }) =>
+                p.cx != null && p.cy != null ? (
+                  <g>
+                    <circle cx={p.cx} cy={p.cy} r={7} fill="none" stroke={SERIES.anomaly} strokeWidth={2} />
+                    <circle cx={p.cx} cy={p.cy} r={3} fill={SERIES.anomaly} />
+                  </g>
+                ) : (
+                  <g />
+                )
+              }
+              isAnimationActive={false}
+              legendType="circle"
+            />
+          )}
           <ReferenceLine
             x={splitT}
             stroke="var(--muted)"

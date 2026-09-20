@@ -64,9 +64,9 @@ def test_analyze_end_to_end_skip_recommendations(daily_csv_bytes):
 
 @pytest.mark.slow
 def test_analyze_reports_recommendation_failure_without_failing_pipeline(daily_csv_bytes, monkeypatch):
-    def boom(**kwargs):
+    def boom(*args, **kwargs):
         raise ra.RecommendationError("no key configured")
-    monkeypatch.setattr(orchestrator, "generate_recommendations", boom)
+    monkeypatch.setattr(orchestrator, "run_strategist", boom)
 
     r = client.post(
         "/analyze",

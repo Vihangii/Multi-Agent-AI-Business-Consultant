@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { fmtDate, fmtInt, fmtMoney, fmtPct } from "@/lib/format";
 import type { AnalyzeResult } from "@/lib/types";
+import { AgentActivity, AnomaliesCard } from "./AgentPanels";
 import type { LastRun } from "./ConsultantApp";
 import { ExportBar } from "./ExportAndSchedule";
 import { ForecastChart } from "./ForecastChart";
@@ -160,6 +161,8 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
           )}
         </Card>
       </div>
+
+      <AnomaliesCard anomalies={result.anomalies} />
     </div>
   );
 }
@@ -187,6 +190,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
           forecast={result.forecast}
           actuals={result.cleaned_data}
           lastActualDate={fs.last_actual_date}
+          anomalies={result.anomalies?.points}
         />
       </Card>
 
@@ -268,14 +272,18 @@ function ReportTab({
     <Card>
       <SectionTitle>🚀 Strategic Consultation Recommendations</SectionTitle>
       {md ? (
-        <div className="prose-report text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+        <div className="space-y-4">
+          <AgentActivity agent={result.agent} />
+          <div className="prose-report text-sm">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+          </div>
         </div>
       ) : result.recommendations_error ? (
         <Notice tone="bad">
-          <div>The Recommendation Agent could not generate a report: {result.recommendations_error}</div>
+          <div>The Strategist Agent could not generate a report: {result.recommendations_error}</div>
           <div className="mt-1 text-xs opacity-80">
-            Check that OPENAI_API_KEY is set on the API server, then re-run the pipeline.
+            Configure a provider on the API server (OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_MODEL for a
+            local model), then re-run the pipeline.
           </div>
         </Notice>
       ) : skipRecommendations ? (

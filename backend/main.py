@@ -27,6 +27,8 @@ from backend.io_utils import UploadError, fetch_remote_file, inspect_dataframe, 
 from backend.orchestrator import run_pipeline
 
 from backend.agents.recommendation_agent import SUPPORTED_LANGUAGES
+from backend.config import CRITIC_ENABLED, STRATEGIST_MODE
+from backend.llm import env_provider_summary
 from backend.observability import (
     ObservabilityMiddleware,
     configure_logging,
@@ -138,11 +140,16 @@ async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint to monitor application and dependency status.
     """
+    llm = env_provider_summary()
     return {
         "status": "healthy",
         "service": "multi-agent-consultant-backend",
-        "openai_configured": has_openai_key(),
-        "openai_model": OPENAI_MODEL,
+        # Kept for older clients; "llm_*" is the current shape
+        "openai_configured": llm["llm_configured"],
+        "openai_model": llm["llm_model"] or OPENAI_MODEL,
+        **llm,
+        "strategist_mode": STRATEGIST_MODE,
+        "critic_enabled": CRITIC_ENABLED,
         "max_upload_mb": MAX_UPLOAD_MB,
         "auth_required": bool(API_KEY),
         # Multipart bodies are capped by the platform on Vercel; larger files must use file_url

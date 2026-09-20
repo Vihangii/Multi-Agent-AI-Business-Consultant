@@ -96,7 +96,10 @@ export function Sidebar({
         <div className="mt-1 text-xs text-muted">
           {health ? (
             <>
-              API online · {health.openai_configured ? "AI enabled" : "no OpenAI key"}
+              API online ·{" "}
+              {health.llm_configured
+                ? `AI: ${health.llm_provider} (${health.llm_model})`
+                : "no LLM configured"}
               {health.auth_required && " · key required"}
             </>
           ) : healthError ? (
@@ -319,9 +322,10 @@ export function Sidebar({
             options={(health?.languages ?? ["English"]).map((l) => ({ value: l, label: l }))}
           />
         </div>
-        {health && !health.openai_configured && !state.skipRecommendations && (
+        {health && !health.llm_configured && !state.skipRecommendations && (
           <Notice tone="info" className="mt-2">
-            The API has no OpenAI key — the report stage will be reported as unavailable.
+            The API has no LLM provider configured (OpenAI, Anthropic or Ollama) — the report stage
+            will be reported as unavailable.
           </Notice>
         )}
       </section>

@@ -17,6 +17,7 @@ cmdstanpy==1.2.5
 openpyxl==3.1.5
 
 openai==1.58.1
+anthropic==1.7.0
 
 # Optional: error tracking (enabled when SENTRY_DSN is set)
 sentry-sdk[fastapi]==2.19.2

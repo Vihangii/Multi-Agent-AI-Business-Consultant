@@ -68,3 +68,28 @@ RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
 SENTRY_DSN = os.getenv("SENTRY_DSN") or None
 # "text" (default) or "json" (one JSON object per line)
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text").strip().lower()
+
+# === LLM provider ===
+# "auto" picks the first configured provider (anthropic → openai → ollama).
+# Or force one: "openai" | "anthropic" | "ollama".
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+
+# Local models via Ollama's OpenAI-compatible endpoint (no key needed)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL") or None
+
+
+def has_anthropic_key() -> bool:
+    return bool(ANTHROPIC_API_KEY) and not ANTHROPIC_API_KEY.startswith("sk-ant-your")
+
+
+# === Agent behaviour ===
+# "tools": the strategist queries the data with function calls (default)
+# "static": one prompt with a pre-built summary (for models without tool support)
+STRATEGIST_MODE = os.getenv("STRATEGIST_MODE", "tools").strip().lower()
+AGENT_MAX_TOOL_ROUNDS = int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "6"))
+# Second LLM pass that checks the report's numbers against the data
+CRITIC_ENABLED = os.getenv("CRITIC_ENABLED", "true").strip().lower() in ("1", "true", "yes")

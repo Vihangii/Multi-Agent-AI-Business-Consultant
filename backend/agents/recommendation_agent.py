@@ -1,14 +1,27 @@
 """
-Recommendation Agent
-Uses OpenAI GPT-4o-mini to generate actionable business recommendations
-based on data analysis and forecast results.
+Recommendation (Strategist) Agent
+Turns the analysis, forecast, scenarios and anomalies into an actionable
+strategy report. Two modes:
+
+  - tools (default): the model is given function-calling tools
+    (monthly breakdown, top/worst periods, period comparison, weekday
+    profile, anomalies, what-if) and queries the data itself before writing.
+  - static: one prompt with a pre-built summary — used when the provider or
+    model has no tool support, or STRATEGIST_MODE=static.
+
+Works with any provider from backend.llm (OpenAI, Anthropic, Ollama).
 """
 
+from __future__ import annotations
+
 import logging
+import time
+from dataclasses import dataclass, field
 
-from openai import OpenAI
-
-from backend.config import OPENAI_MODEL, require_openai_key
+from backend.agents.anomaly_agent import anomalies_for_prompt
+from backend.agents.strategist_tools import TOOL_SPECS, DataContext, execute_tool
+from backend.config import AGENT_MAX_TOOL_ROUNDS, STRATEGIST_MODE
+from backend.llm import LLMClient, LLMNotConfigured, get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +30,15 @@ class RecommendationError(Exception):
     """Raised when the recommendation stage cannot produce a report."""
 
 
-_client: OpenAI | None = None
-
-
-def _get_client() -> OpenAI:
-    """Create the OpenAI client on first use so importing this module never needs a key."""
-    global _client
-    if _client is None:
-        _client = OpenAI(api_key=require_openai_key())
-    return _client
+@dataclass
+class StrategistResult:
+    report: str
+    mode: str  # "tools" | "static"
+    provider: str
+    model: str
+    tool_calls: list[dict] = field(default_factory=list)  # trace: name, arguments, result_preview, ms
+    rounds: int = 0
+    usage: dict = field(default_factory=dict)
 
 
 def _money(value) -> str:
@@ -84,6 +97,18 @@ SUPPORTED_LANGUAGES = [
     "English", "Spanish", "French", "German", "Portuguese", "Italian", "Dutch",
     "Sinhala", "Tamil", "Hindi", "Arabic", "Chinese (Simplified)", "Japanese", "Korean",
 ]
+
+
+TOOLS_ADDENDUM = """
+
+You have tools that query the underlying data. Before writing the report:
+1. Call get_monthly_breakdown and get_anomalies at minimum.
+2. Use get_top_periods, compare_periods, get_weekday_profile and what_if wherever a
+   recommendation would benefit from a concrete number — cite the numbers you retrieve.
+3. For every anomaly, state whether you treat it as a one-off (excluded from planning)
+   or a signal (acted on), and why.
+Only quote figures you obtained from the data or the tools. When you have what you
+need, write the full report in the required format as your final answer."""
 
 
 def _language_instruction(language: str | None) -> str:
@@ -189,53 +214,120 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict, whatif: dict | No
     return prompt
 
 
+def _llm() -> LLMClient:
+    try:
+        return get_llm()
+    except LLMNotConfigured as e:
+        raise RecommendationError(str(e)) from e
+
+
 def generate_recommendations(
     analysis: dict,
     forecast_summary: dict,
     whatif: dict | None = None,
     language: str | None = None,
+    anomalies: dict | None = None,
 ) -> str:
     """
-    Generate AI-powered business recommendations using OpenAI.
-
-    Args:
-        analysis: Dictionary from data_agent.analyze_data().
-        forecast_summary: Dictionary from forecast_agent.forecast_revenue()['summary'].
-        whatif: Optional scenario table from forecast_revenue()['whatif'].
-        language: Language for the report (default English).
-
-    Returns:
-        Formatted markdown string of business recommendations.
+    Static mode: one prompt, one answer. Kept as the fallback for providers
+    without tool support and as a simple entry point for library use.
 
     Raises:
-        RecommendationError: If no API key is configured, the API call fails,
+        RecommendationError: If no provider is configured, the request fails,
             or the model returns an empty response.
     """
     user_prompt = _build_user_prompt(analysis, forecast_summary, whatif)
+    if anomalies:
+        user_prompt += "\n\n🚨 Anomalies:\n" + anomalies_for_prompt(anomalies)
     system_prompt = SYSTEM_PROMPT + _language_instruction(language)
+    llm = _llm()
 
     try:
-        client = _get_client()
-    except ValueError as e:
-        raise RecommendationError(str(e)) from e
-
-    try:
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+        response = llm.chat(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            max_tokens=4000,
             temperature=0.7,
-            max_tokens=2500,
-            top_p=0.9,
         )
     except Exception as e:
-        logger.error("OpenAI request failed: %s", e)
-        raise RecommendationError(f"OpenAI request failed: {e}") from e
+        logger.error("%s request failed: %s", llm.provider, e)
+        raise RecommendationError(f"{llm.provider} request failed: {e}") from e
 
-    recommendations = response.choices[0].message.content
-    if not recommendations or not recommendations.strip():
-        raise RecommendationError("OpenAI returned an empty response.")
+    if not response.text or not response.text.strip():
+        raise RecommendationError(f"{llm.provider} returned an empty response.")
+    return response.text
 
-    return recommendations
+
+def run_strategist(ctx: DataContext, language: str | None = None, mode: str | None = None) -> StrategistResult:
+    """
+    Produce the strategy report, letting the model query the data with tools.
+
+    Falls back to static mode when tools are disabled or unsupported. The
+    returned trace of tool calls is surfaced in the UI as "agent activity".
+
+    Raises:
+        RecommendationError: as generate_recommendations.
+    """
+    mode = (mode or STRATEGIST_MODE or "tools").lower()
+    llm = _llm()
+    if mode != "tools" or not getattr(llm, "supports_tools", False):
+        report = generate_recommendations(ctx.analysis, ctx.forecast_summary, ctx.whatif, language, ctx.anomalies)
+        return StrategistResult(report=report, mode="static", provider=llm.provider, model=llm.model)
+
+    system_prompt = SYSTEM_PROMPT + TOOLS_ADDENDUM + _language_instruction(language)
+    user_prompt = (
+        _build_user_prompt(ctx.analysis, ctx.forecast_summary, ctx.whatif)
+        + "\n\n🚨 Anomaly summary:\n" + anomalies_for_prompt(ctx.anomalies)
+        + "\n\nUse the tools to investigate before answering."
+    )
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    trace: list[dict] = []
+    usage_total = {"input_tokens": 0, "output_tokens": 0}
+    rounds = 0
+
+    try:
+        while True:
+            response = llm.chat(messages, TOOL_SPECS, max_tokens=4000, temperature=0.7)
+            for k in usage_total:
+                usage_total[k] += int(response.usage.get(k, 0) or 0)
+
+            if not response.tool_calls:
+                text = response.text.strip()
+                if not text:
+                    raise RecommendationError(f"{llm.provider} returned an empty response.")
+                return StrategistResult(
+                    report=text, mode="tools", provider=llm.provider, model=llm.model,
+                    tool_calls=trace, rounds=rounds, usage=usage_total,
+                )
+
+            rounds += 1
+            messages.append({"role": "assistant", "content": response.text or "", "tool_calls": response.tool_calls})
+            for call in response.tool_calls:
+                t0 = time.perf_counter()
+                result = execute_tool(ctx, call.name, call.arguments)
+                trace.append({
+                    "tool": call.name,
+                    "arguments": call.arguments,
+                    "result_preview": result[:300],
+                    "ms": round((time.perf_counter() - t0) * 1000, 1),
+                })
+                messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name, "content": result})
+
+            if rounds >= AGENT_MAX_TOOL_ROUNDS:
+                # Stop the loop: ask for the final answer without offering tools
+                messages.append({"role": "user", "content": "You have gathered enough. Write the final report now, in the required format."})
+                response = llm.chat(messages, None, max_tokens=4000, temperature=0.7)
+                text = response.text.strip()
+                if not text:
+                    raise RecommendationError(f"{llm.provider} returned an empty response.")
+                return StrategistResult(
+                    report=text, mode="tools", provider=llm.provider, model=llm.model,
+                    tool_calls=trace, rounds=rounds, usage=usage_total,
+                )
+    except RecommendationError:
+        raise
+    except Exception as e:
+        logger.error("%s request failed: %s", llm.provider, e)
+        raise RecommendationError(f"{llm.provider} request failed: {e}") from e

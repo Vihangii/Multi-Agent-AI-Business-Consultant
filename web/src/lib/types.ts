@@ -102,6 +102,69 @@ export interface CleanedPoint {
   y: number;
 }
 
+export interface AnomalyPoint {
+  date: string;
+  actual: number;
+  expected: number;
+  deviation: number;
+  deviation_percent: number | null;
+  z_score: number;
+  direction: "spike" | "drop";
+  severity: "high" | "medium";
+  outside_interval: boolean;
+}
+
+export interface AnomalyPeriod {
+  period: string;
+  revenue: number;
+  previous_revenue: number;
+  change_percent: number;
+  direction: "spike" | "drop";
+  severity: "high" | "medium";
+}
+
+export interface Anomalies {
+  points: AnomalyPoint[];
+  periods: AnomalyPeriod[];
+  summary: {
+    point_count: number;
+    spike_count: number;
+    drop_count: number;
+    largest_drop: AnomalyPoint | null;
+    largest_spike: AnomalyPoint | null;
+    period_count: number;
+    anomalous_share_percent: number;
+    error?: string;
+  };
+}
+
+export interface ToolCallTrace {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result_preview: string;
+  ms: number;
+}
+
+export interface QaResult {
+  status: "passed" | "corrected" | "unverified" | "skipped";
+  issues: { claim: string; correct_value: string; section: string }[];
+  corrections: number;
+  provider?: string | null;
+  model?: string | null;
+  note?: string | null;
+}
+
+export interface AgentInfo {
+  mode: "tools" | "static";
+  provider: string;
+  model: string;
+  tool_calls: ToolCallTrace[];
+  rounds: number;
+  usage: { input_tokens?: number; output_tokens?: number };
+  qa: QaResult;
+  original_report?: string;
+}
+
 export interface AnalyzeResult {
   success: boolean;
   error: string | null;
@@ -111,8 +174,10 @@ export interface AnalyzeResult {
   forecast_summary: ForecastSummary;
   forecast: ForecastPoint[];
   whatif?: WhatIf | null;
+  anomalies?: Anomalies;
   recommendations?: string;
   recommendations_error?: string;
+  agent?: AgentInfo;
   columns: string[];
   date_column: string;
   revenue_column: string;
@@ -135,6 +200,12 @@ export interface HealthResult {
   rate_limit_per_minute: number;
   languages: string[];
   whatif_steps: number[];
+  llm_provider: "openai" | "anthropic" | "ollama" | null;
+  llm_model: string | null;
+  llm_configured: boolean;
+  llm_provider_setting: string;
+  strategist_mode: "tools" | "static";
+  critic_enabled: boolean;
 }
 
 export interface AnalyzeOptions {

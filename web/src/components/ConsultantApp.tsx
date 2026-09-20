@@ -239,7 +239,7 @@ function Welcome({ running }: { running: boolean }) {
           ? "⚡ Running the multi-agent consulting pipeline… this takes a few seconds (longer with AI recommendations)."
           : "👈 Upload your business transaction data in the sidebar (or download the sample CSV) and click Run Consultant Pipeline to begin."}
       </Notice>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
         <Card>
           <h3 className="mb-2 font-semibold">🔍 1. Data Agent</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
@@ -257,11 +257,27 @@ function Welcome({ running }: { running: boolean }) {
           </ul>
         </Card>
         <Card>
-          <h3 className="mb-2 font-semibold">🚀 3. Recommendation Agent</h3>
+          <h3 className="mb-2 font-semibold">🚨 3. Anomaly Agent</h3>
           <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Sends the analysis to an OpenAI GPT model.</li>
-            <li>Returns prioritised, data-backed strategies.</li>
-            <li>Includes a 90-day action plan.</li>
+            <li>Scores every day against the model&apos;s expectation.</li>
+            <li>Flags collapses and spikes with robust z-scores.</li>
+            <li>Hands them to the strategist: one-off or signal?</li>
+          </ul>
+        </Card>
+        <Card>
+          <h3 className="mb-2 font-semibold">🤖 4. Strategist Agent</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
+            <li>Queries the data with tools (months, comparisons, what-if).</li>
+            <li>Writes prioritised, data-backed strategies and a 90-day plan.</li>
+            <li>Runs on OpenAI, Claude or a local Ollama model.</li>
+          </ul>
+        </Card>
+        <Card>
+          <h3 className="mb-2 font-semibold">🧐 5. Critic Agent</h3>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
+            <li>Fact-checks every figure in the report against the data.</li>
+            <li>Rewrites wrong claims and lists the corrections.</li>
+            <li>Never blocks delivery — you always get the analysis.</li>
           </ul>
         </Card>
       </div>
