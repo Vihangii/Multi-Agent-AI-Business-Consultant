@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import type { AgentInfo, Anomalies } from "@/lib/types";
-import { Card, Notice, SectionTitle } from "./ui";
+import { Card, Icon, Notice, SectionTitle } from "./ui";
 
 // ---------------------------------------------------------------------------
 // Anomalies (dashboard)
@@ -16,7 +16,7 @@ export function AnomaliesCard({ anomalies }: { anomalies: Anomalies | undefined 
 
   return (
     <Card>
-      <SectionTitle>🚨 Anomaly Agent</SectionTitle>
+      <SectionTitle hint="Periods that departed sharply from the model's expectation">Anomaly agent</SectionTitle>
       {s.error ? (
         <Notice tone="warn">Anomaly detection failed: {s.error}</Notice>
       ) : none ? (
@@ -106,7 +106,7 @@ export function AgentActivity({ agent }: { agent: AgentInfo | undefined }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-md border border-border bg-surface-2 px-2 py-1">
-          🤖 {agent.provider} · <span className="font-mono">{agent.model}</span>
+          <Icon name="sparkle" size={12} /> {agent.provider} · <span className="font-mono">{agent.model}</span>
         </span>
         <span className="rounded-md border border-border bg-surface-2 px-2 py-1">
           {agent.mode === "tools"
@@ -144,7 +144,7 @@ export function AgentActivity({ agent }: { agent: AgentInfo | undefined }) {
       )}
 
       <Notice tone={qaTone}>
-        <div className="font-medium">🧐 QA · {qaLabel}</div>
+        <div className="font-medium">Critic QA · {qaLabel}</div>
         {qa.issues.length > 0 && (
           <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">
             {qa.issues.map((i, k) => (
