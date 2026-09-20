@@ -9,15 +9,15 @@ import { AgentActivity, AnomaliesCard } from "./AgentPanels";
 import type { LastRun } from "./ConsultantApp";
 import { ExportBar } from "./ExportAndSchedule";
 import { ForecastChart } from "./ForecastChart";
-import { Card, Metric, Notice, SectionTitle } from "./ui";
+import { Card, Icon, Metric, Notice, SectionTitle } from "./ui";
 import { WhatIfTab } from "./WhatIfTab";
 
 const TABS = [
-  { id: "dashboard", label: "📊 Executive Dashboard" },
-  { id: "forecast", label: "📈 Revenue Forecast" },
-  { id: "whatif", label: "🎛️ What-if" },
-  { id: "report", label: "🚀 Strategic AI Report" },
-  { id: "data", label: "📋 Cleaned Data" },
+  { id: "dashboard", label: "Dashboard", icon: "chart" },
+  { id: "forecast", label: "Forecast", icon: "chart" },
+  { id: "whatif", label: "What-if", icon: "bolt" },
+  { id: "report", label: "AI Report", icon: "sparkle" },
+  { id: "data", label: "Data", icon: "file" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -35,23 +35,38 @@ export function Results({
 }) {
   const [tab, setTab] = useState<TabId>("dashboard");
 
+  const fs = result.forecast_summary;
   return (
-    <div className="space-y-4">
-      <ExportBar result={result} lastRun={lastRun} file={file} />
-      <div role="tablist" className="flex flex-wrap gap-1 border-b border-border">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">{lastRun?.fileName ?? "Analysis"}</h1>
+          <p className="mt-0.5 text-sm text-text-2">
+            {result.cleaned_row_count.toLocaleString()} rows · {fs.data_granularity} · forecast {fs.forecast_periods} × {fs.forecast_frequency} ·{" "}
+            {result.elapsed_seconds.toFixed(1)} s
+          </p>
+        </div>
+        <ExportBar result={result} lastRun={lastRun} file={file} />
+      </div>
+
+      <div role="tablist" className="flex flex-wrap gap-1 rounded-xl border border-border bg-surface p-1 shadow-card">
         {TABS.map((t) => (
           <button
             key={t.id}
             role="tab"
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-              tab === t.id
-                ? "border-accent text-text"
-                : "border-transparent text-text-2 hover:text-text"
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+              tab === t.id ? "bg-accent text-accent-ink shadow-card" : "text-text-2 hover:bg-surface-2 hover:text-text"
             }`}
           >
+            <Icon name={t.icon} size={14} />
             {t.label}
+            {t.id === "report" && result.agent?.qa.status === "corrected" && (
+              <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${tab === t.id ? "bg-white/20" : "bg-warn-bg text-warn"}`}>
+                {result.agent.qa.corrections}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -81,7 +96,7 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>📌 Key Performance Indicators</SectionTitle>
+        <SectionTitle>Key performance indicators</SectionTitle>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Total Revenue" value={fmtMoney(a.revenue.total)} hint="Dataset cumulative revenue" />
           <Metric
@@ -111,7 +126,7 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
       </Card>
 
       <Card>
-        <SectionTitle>🔍 Data Processing & Detection Details</SectionTitle>
+        <SectionTitle>Data processing & detection</SectionTitle>
         <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
           <Row k="Detected date column" v={<code>{result.date_column}</code>} />
           <Row
@@ -128,7 +143,7 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <SectionTitle>💰 Revenue Statistics</SectionTitle>
+          <SectionTitle>Revenue statistics</SectionTitle>
           <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
             <Row k="Mean" v={fmtMoney(a.revenue.mean)} />
             <Row k="Median" v={fmtMoney(a.revenue.median)} />
@@ -139,7 +154,7 @@ function DashboardTab({ result }: { result: AnalyzeResult }) {
           </dl>
         </Card>
         <Card>
-          <SectionTitle>📆 Monthly Breakdown</SectionTitle>
+          <SectionTitle>Monthly breakdown</SectionTitle>
           {a.monthly ? (
             <div className="space-y-2">
               <Notice tone="good">
@@ -185,7 +200,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>📈 Revenue Projections (Prophet Forecasting)</SectionTitle>
+        <SectionTitle hint="Actuals, Prophet forecast and 95% interval; anomalies ringed in red">Revenue projection</SectionTitle>
         <ForecastChart
           forecast={result.forecast}
           actuals={result.cleaned_data}
@@ -195,7 +210,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
       </Card>
 
       <Card>
-        <SectionTitle>🔮 Forecast Metrics & Peak Values</SectionTitle>
+        <SectionTitle>Forecast metrics</SectionTitle>
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric label="Peak Forecasted Value" value={fmtMoney(fs.peak_forecasted_value)} hint={fmtDate(fs.peak_forecasted_date)} />
           <Metric label="Avg Forecasted Value" value={fmtMoney(fs.avg_forecasted_value)} hint={`over ${fs.forecast_periods} periods`} />
@@ -208,7 +223,7 @@ function ForecastTab({ result }: { result: AnalyzeResult }) {
       </Card>
 
       <Card>
-        <SectionTitle>🎯 Model Accuracy (backtest)</SectionTitle>
+        <SectionTitle>Model accuracy (backtest)</SectionTitle>
         {acc ? (
           <>
             <p className="mb-3 text-sm text-text-2">
@@ -270,7 +285,7 @@ function ReportTab({
 
   return (
     <Card>
-      <SectionTitle>🚀 Strategic Consultation Recommendations</SectionTitle>
+      <SectionTitle>Strategic recommendations</SectionTitle>
       {md ? (
         <div className="space-y-4">
           <AgentActivity agent={result.agent} />
@@ -303,14 +318,14 @@ function DataTab({ result }: { result: AnalyzeResult }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <SectionTitle>📋 Cleaned Data ({fmtInt(result.cleaned_data.length)} rows)</SectionTitle>
+        <SectionTitle>Cleaned data ({fmtInt(result.cleaned_data.length)} rows)</SectionTitle>
         <ScrollTable
           head={["Date", "Revenue"]}
           rows={result.cleaned_data.map((r) => [fmtDate(r.ds), fmtMoney(r.y)])}
         />
       </Card>
       <Card>
-        <SectionTitle>🔮 Forecast Table ({fmtInt(result.forecast.length)} rows)</SectionTitle>
+        <SectionTitle>Forecast table ({fmtInt(result.forecast.length)} rows)</SectionTitle>
         <ScrollTable
           head={["Date", "Predicted", "Lower", "Upper"]}
           rows={result.forecast.map((r) => [

@@ -1,5 +1,5 @@
-import { ConsultantApp } from "@/components/ConsultantApp";
+import { Landing } from "@/components/Landing";
 
 export default function Page() {
-  return <ConsultantApp />;
+  return <Landing />;
 }

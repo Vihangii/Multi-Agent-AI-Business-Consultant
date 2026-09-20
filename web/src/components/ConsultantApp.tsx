@@ -11,9 +11,18 @@ export interface LastRun {
   fileName: string;
   options: AnalyzeOptions;
 }
+import { AppShell } from "./AppShell";
 import { Results } from "./Results";
 import { AUTO, HORIZON_BOUNDS, Sidebar, type SidebarState } from "./Sidebar";
-import { Card, Notice } from "./ui";
+import { Button, Card, Icon, Notice, Skeleton, Stepper } from "./ui";
+
+const STAGES = [
+  { label: "Data" },
+  { label: "Forecast" },
+  { label: "Anomalies" },
+  { label: "Strategist" },
+  { label: "Critic" },
+];
 
 const initialState: SidebarState = {
   file: null,
@@ -42,6 +51,27 @@ export function ConsultantApp() {
   const [lastRun, setLastRun] = useState<LastRun | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const inspectSeq = useRef(0);
+  const [stage, setStage] = useState(-1);
+  const stageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The API doesn't stream progress, so estimate stage timing while a run is in flight
+  const startStageTicker = useCallback((skipAi: boolean) => {
+    const last = skipAi ? 2 : 4;
+    const timings = [600, 1800, 800, 9000, 8000];
+    let i = 0;
+    setStage(0);
+    const tick = () => {
+      i = Math.min(i + 1, last);
+      setStage(i);
+      if (i < last) stageTimer.current = setTimeout(tick, timings[i]);
+    };
+    stageTimer.current = setTimeout(tick, timings[0]);
+  }, []);
+  const stopStageTicker = useCallback(() => {
+    if (stageTimer.current) clearTimeout(stageTimer.current);
+    stageTimer.current = null;
+    setStage(-1);
+  }, []);
   // Blob URL for the current file when it was too large to POST directly
   const blobUrl = useRef<string | null>(null);
 
@@ -126,6 +156,7 @@ export function ConsultantApp() {
     if (!state.file) return;
     setRunning(true);
     setRunError(null);
+    startStageTicker(state.skipRecommendations);
     try {
       const res = await analyzeFile(
         await resolveSource(state.file),
@@ -167,34 +198,16 @@ export function ConsultantApp() {
         setRunError(e instanceof Error ? e.message : String(e));
       }
     } finally {
+      stopStageTicker();
       setRunning(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setSidebarOpen((o) => !o)}
-          className="rounded-lg border border-border px-2 py-1 text-sm hover:bg-surface-2"
-          aria-label="Toggle sidebar"
-        >
-          ☰
-        </button>
-        <div>
-          <h1 className="bg-gradient-to-r from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] bg-clip-text text-xl font-extrabold tracking-tight text-transparent sm:text-2xl">
-            Multi-Agent AI Business Consultant
-          </h1>
-          <p className="text-xs text-text-2 sm:text-sm">
-            Data-driven automated business analysis, forecasting, and strategic consulting
-          </p>
-        </div>
-      </header>
-
+    <AppShell health={health} healthError={healthError} onToggleSidebar={() => setSidebarOpen((o) => !o)} fullBleed>
       <div className="flex flex-1">
         {sidebarOpen && (
-          <div className="w-full shrink-0 lg:sticky lg:top-0 lg:h-screen lg:w-[340px]">
+          <div className="w-full shrink-0 lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:w-[360px]">
             <Sidebar
               state={state}
               health={health}
@@ -207,79 +220,101 @@ export function ConsultantApp() {
           </div>
         )}
 
-        <main className={`min-w-0 flex-1 p-4 sm:p-6 ${sidebarOpen ? "hidden lg:block" : ""}`}>
-          {runError && (
-            <Notice tone="bad" className="mb-4">
-              {runError}
-            </Notice>
-          )}
+        <main className={`min-w-0 flex-1 bg-page ${sidebarOpen ? "hidden lg:block" : ""}`}>
+          <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+            {running && (
+              <div className="mb-5 animate-fade-up rounded-xl border border-border bg-surface p-4 shadow-card">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">Running the agent pipeline…</div>
+                  <div className="text-xs text-muted">
+                    {state.skipRecommendations ? "about 5 seconds" : "10–40 seconds with AI agents"}
+                  </div>
+                </div>
+                <Stepper steps={STAGES} active={stage} doneThrough={stage - 1} />
+              </div>
+            )}
 
-          {result ? (
-            <Results
-              result={result}
-              skipRecommendations={resultSkipped}
-              lastRun={lastRun}
-              file={state.file}
-              apiKey={state.apiKey}
-            />
-          ) : (
-            <Welcome running={running} />
-          )}
+            {runError && (
+              <Notice tone="bad" className="mb-5">
+                {runError}
+              </Notice>
+            )}
+
+            {result ? (
+              <div className="animate-fade-up">
+                <Results result={result} skipRecommendations={resultSkipped} lastRun={lastRun} file={state.file} apiKey={state.apiKey} />
+              </div>
+            ) : running ? (
+              <RunningSkeleton />
+            ) : (
+              <Welcome onStart={() => setSidebarOpen(true)} hasFile={!!state.file} />
+            )}
+          </div>
         </main>
+      </div>
+    </AppShell>
+  );
+}
+
+function RunningSkeleton() {
+  return (
+    <div className="space-y-4" aria-hidden>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-24" />
+        ))}
+      </div>
+      <Skeleton className="h-72" />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Skeleton className="h-40" />
+        <Skeleton className="h-40" />
       </div>
     </div>
   );
 }
 
-function Welcome({ running }: { running: boolean }) {
+function Welcome({ onStart, hasFile }: { onStart: () => void; hasFile: boolean }) {
+  const agents = [
+    { icon: "file", title: "Data Agent", text: "Detects columns, parses currency strings, aggregates duplicates, computes growth and volatility." },
+    { icon: "chart", title: "Forecast Agent", text: "Prophet forecast with 95% intervals, a backtest (MAPE, MAE, coverage) and what-if scenarios." },
+    { icon: "alert", title: "Anomaly Agent", text: "Robust z-scores on model residuals flag collapses and spikes for the strategist." },
+    { icon: "sparkle", title: "Strategist Agent", text: "Queries the data with tools before writing prioritised, data-backed recommendations." },
+    { icon: "shield", title: "Critic Agent", text: "Fact-checks every figure in the report against the data and corrects what's wrong." },
+  ];
   return (
-    <div className="space-y-4">
-      <Notice tone="info">
-        {running
-          ? "⚡ Running the multi-agent consulting pipeline… this takes a few seconds (longer with AI recommendations)."
-          : "👈 Upload your business transaction data in the sidebar (or download the sample CSV) and click Run Consultant Pipeline to begin."}
-      </Notice>
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <Card>
-          <h3 className="mb-2 font-semibold">🔍 1. Data Agent</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Detects date and revenue columns automatically.</li>
-            <li>Parses currency strings, aggregates duplicate dates.</li>
-            <li>Computes growth, monthly and volatility statistics.</li>
-          </ul>
-        </Card>
-        <Card>
-          <h3 className="mb-2 font-semibold">📈 2. Forecast Agent</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Fits a Facebook Prophet time-series model.</li>
-            <li>Projects future revenue with 95% confidence intervals.</li>
-            <li>Backtests itself and reports MAPE, MAE and coverage.</li>
-          </ul>
-        </Card>
-        <Card>
-          <h3 className="mb-2 font-semibold">🚨 3. Anomaly Agent</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Scores every day against the model&apos;s expectation.</li>
-            <li>Flags collapses and spikes with robust z-scores.</li>
-            <li>Hands them to the strategist: one-off or signal?</li>
-          </ul>
-        </Card>
-        <Card>
-          <h3 className="mb-2 font-semibold">🤖 4. Strategist Agent</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Queries the data with tools (months, comparisons, what-if).</li>
-            <li>Writes prioritised, data-backed strategies and a 90-day plan.</li>
-            <li>Runs on OpenAI, Claude or a local Ollama model.</li>
-          </ul>
-        </Card>
-        <Card>
-          <h3 className="mb-2 font-semibold">🧐 5. Critic Agent</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-text-2">
-            <li>Fact-checks every figure in the report against the data.</li>
-            <li>Rewrites wrong claims and lists the corrections.</li>
-            <li>Never blocks delivery — you always get the analysis.</li>
-          </ul>
-        </Card>
+    <div className="animate-fade-up space-y-6">
+      <Card className="bg-dots">
+        <div className="max-w-2xl">
+          <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
+          <p className="mt-2 text-text-2">
+            {hasFile
+              ? "Your file is ready. Confirm the columns, choose your options, and run the pipeline."
+              : "Upload a sales or revenue spreadsheet in the panel to begin — or grab the sample CSV to see everything in under a minute."}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2 lg:hidden">
+            <Button variant="primary" onClick={onStart}>
+              <Icon name="upload" size={15} /> Open the configuration panel
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <div>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.08em] text-muted">What runs when you click Run</h2>
+        <ol className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {agents.map((a, i) => (
+            <li key={a.title} className="rounded-xl border border-border bg-surface p-4 shadow-card">
+              <div className="flex items-center justify-between">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
+                  <Icon name={a.icon} size={16} />
+                </span>
+                <span className="text-xs font-semibold tabular text-muted">0{i + 1}</span>
+              </div>
+              <h3 className="mt-3 text-sm font-semibold">{a.title}</h3>
+              <p className="mt-1 text-xs leading-relaxed text-text-2">{a.text}</p>
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );

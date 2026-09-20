@@ -78,26 +78,31 @@ function CustomTooltip({
 
 export function ForecastChart({ forecast, actuals, lastActualDate, anomalies }: Props) {
   const rows = useMemo<Row[]>(() => {
-    const actualByDay = new Map<number, number>();
+    // Key by calendar date (YYYY-MM-DD), not epoch ms: the API sends actuals as
+    // "2024-09-07T00:00:00" (parsed as local time) and anomaly dates as
+    // "2024-09-07" (parsed as UTC), which differ by the timezone offset.
+    const day = (iso: string) => iso.slice(0, 10);
+    const actualByDay = new Map<string, number>();
     for (const a of actuals) {
-      actualByDay.set(new Date(a.ds).getTime(), a.y);
+      actualByDay.set(day(a.ds), a.y);
     }
-    const anomalyByDay = new Map<number, AnomalyPoint>();
+    const anomalyByDay = new Map<string, AnomalyPoint>();
     for (const a of anomalies ?? []) {
-      anomalyByDay.set(new Date(a.date).getTime(), a);
+      anomalyByDay.set(day(a.date), a);
     }
     return forecast.map((f) => {
       const t = new Date(f.ds).getTime();
+      const key = day(f.ds);
       const lower = Math.max(0, f.lower_bound);
-      const info = anomalyByDay.get(t);
+      const info = anomalyByDay.get(key);
       return {
         t,
         predicted: f.predicted,
         lower,
         upper: f.upper_bound,
         band: [lower, f.upper_bound],
-        actual: actualByDay.get(t),
-        anomaly: info ? actualByDay.get(t) : undefined,
+        actual: actualByDay.get(key),
+        anomaly: info ? actualByDay.get(key) : undefined,
         anomalyInfo: info,
       };
     });
