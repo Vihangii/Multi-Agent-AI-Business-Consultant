@@ -12,17 +12,11 @@ export interface LastRun {
   options: AnalyzeOptions;
 }
 import { AppShell } from "./AppShell";
+import { LoadingScreen, PipelineOverlay } from "./LoadingScreen";
 import { Results } from "./Results";
 import { AUTO, HORIZON_BOUNDS, Sidebar, type SidebarState } from "./Sidebar";
-import { Button, Card, Icon, Notice, Skeleton, Stepper } from "./ui";
+import { Button, Card, Icon, Notice, Skeleton } from "./ui";
 
-const STAGES = [
-  { label: "Data" },
-  { label: "Forecast" },
-  { label: "Anomalies" },
-  { label: "Strategist" },
-  { label: "Critic" },
-];
 
 const initialState: SidebarState = {
   file: null,
@@ -221,17 +215,12 @@ export function ConsultantApp() {
         )}
 
         <main className={`min-w-0 flex-1 bg-page ${sidebarOpen ? "hidden lg:block" : ""}`}>
+          {!health && !healthError && !result ? (
+            <LoadingScreen title="Connecting to the API" subtitle="Checking the backend and which AI provider is available…" />
+          ) : (
           <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
             {running && (
-              <div className="mb-5 animate-fade-up rounded-xl border border-border bg-surface p-4 shadow-card">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium">Running the agent pipeline…</div>
-                  <div className="text-xs text-muted">
-                    {state.skipRecommendations ? "about 5 seconds" : "10–40 seconds with AI agents"}
-                  </div>
-                </div>
-                <Stepper steps={STAGES} active={stage} doneThrough={stage - 1} />
-              </div>
+              <PipelineOverlay stage={stage} skipAi={state.skipRecommendations} fileName={state.file?.name} />
             )}
 
             {runError && (
@@ -250,6 +239,7 @@ export function ConsultantApp() {
               <Welcome onStart={() => setSidebarOpen(true)} hasFile={!!state.file} />
             )}
           </div>
+          )}
         </main>
       </div>
     </AppShell>
@@ -301,9 +291,9 @@ function Welcome({ onStart, hasFile }: { onStart: () => void; hasFile: boolean }
 
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.08em] text-muted">What runs when you click Run</h2>
-        <ol className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <ol className="stagger grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           {agents.map((a, i) => (
-            <li key={a.title} className="rounded-xl border border-border bg-surface p-4 shadow-card">
+            <li key={a.title} className="hover-lift rounded-xl border border-border bg-surface p-4 shadow-card">
               <div className="flex items-center justify-between">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
                   <Icon name={a.icon} size={16} />

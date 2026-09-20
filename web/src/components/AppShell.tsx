@@ -5,8 +5,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { HealthResult } from "@/lib/types";
 import { Badge, Icon } from "./ui";
 
-const REPO = "https://github.com/Vihangii/Multi-Agent-AI-Business-Consultant";
-
 export function Logo({ size = 28 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2.5">
@@ -167,9 +165,6 @@ export function AppShell({
             <Link href="/#how-it-works" className="rounded-md px-2.5 py-1.5 text-text-2 hover:bg-surface-2 hover:text-text">
               How it works
             </Link>
-            <a href={REPO} target="_blank" rel="noreferrer" className="rounded-md px-2.5 py-1.5 text-text-2 hover:bg-surface-2 hover:text-text">
-              GitHub
-            </a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {health !== undefined && <ApiStatus health={health ?? null} error={healthError ?? null} />}
@@ -183,12 +178,7 @@ export function AppShell({
       <footer className="border-t border-border bg-surface">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-5 text-xs text-muted sm:flex-row">
           <span>© {new Date().getFullYear()} Multi-Agent AI Business Consultant</span>
-          <span className="flex items-center gap-3">
-            <span>FastAPI · Prophet · Next.js</span>
-            <a href={REPO} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-text">
-              <Icon name="github" size={14} /> Source
-            </a>
-          </span>
+          <span>FastAPI · Prophet · Next.js</span>
         </div>
       </footer>
     </div>
