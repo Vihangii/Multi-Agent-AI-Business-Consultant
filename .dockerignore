@@ -20,3 +20,6 @@ README.md
 web/
 
 vendor/matplotlib-stub/
+package.json
+scripts/
+node_modules/

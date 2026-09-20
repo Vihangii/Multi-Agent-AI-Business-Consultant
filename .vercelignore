@@ -18,3 +18,7 @@ README.md
 !vendor/matplotlib-stub/README.md
 .env
 .env.*
+package.json
+package-lock.json
+scripts/
+node_modules/

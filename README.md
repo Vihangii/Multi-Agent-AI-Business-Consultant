@@ -50,8 +50,13 @@ CSV / Excel ─▶ Data Agent ─▶ Forecast Agent ─▶ Anomaly Agent ─▶ 
 
 ## Quick start
 
+```bash
+# Any OS, one terminal - starts the API and the web app together (after the setup below)
+npm run dev
+```
+
 ```powershell
-# Windows — creates the venv and .env if missing, starts API + web app in two windows
+# Windows alternative - also creates the venv and .env if missing; two windows
 .\run.ps1
 ```
 
