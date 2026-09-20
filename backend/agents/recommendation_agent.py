@@ -79,8 +79,25 @@ A prioritized list of immediate actions for the next 90 days.
 
 Use professional language but keep it accessible. Include relevant emojis for visual clarity."""
 
+# Languages offered by the UI. Any other string is passed through to the model as-is.
+SUPPORTED_LANGUAGES = [
+    "English", "Spanish", "French", "German", "Portuguese", "Italian", "Dutch",
+    "Sinhala", "Tamil", "Hindi", "Arabic", "Chinese (Simplified)", "Japanese", "Korean",
+]
 
-def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
+
+def _language_instruction(language: str | None) -> str:
+    lang = (language or "English").strip()
+    if lang.lower() in ("", "en", "english"):
+        return ""
+    return (
+        f"\n\nIMPORTANT: Write the ENTIRE report in {lang}. Keep the section structure, "
+        "markdown formatting and emojis; translate all headings and content. "
+        "Keep numbers, currency symbols and dates in their original form."
+    )
+
+
+def _build_user_prompt(analysis: dict, forecast_summary: dict, whatif: dict | None = None) -> str:
     """
     Build a detailed user prompt from analysis and forecast data.
 
@@ -151,19 +168,41 @@ def _build_user_prompt(analysis: dict, forecast_summary: dict) -> str:
   - Confidence Range: {_money(ci.get('lower', 0))} to {_money(ci.get('upper', 0))}
   - Avg Forecasted Value: {_money(forecast_summary.get('avg_forecasted_value', 0))}
   - Peak Forecast: {_money(forecast_summary.get('peak_forecasted_value', 0))} ({forecast_summary.get('peak_forecasted_date', 'N/A')})
+"""
 
-Based on this data, provide your comprehensive strategic analysis and recommendations."""
+    # What-if scenarios (only meaningful with a real driver column)
+    if whatif and whatif.get("driver") and whatif.get("scenarios"):
+        lines = []
+        for sc in whatif["scenarios"]:
+            if sc.get("change_percent") == 0:
+                continue
+            lines.append(
+                f"  - {sc['change_percent']:+d}% {whatif['driver']}: total forecast "
+                f"{_money(sc.get('total_forecasted', 0))} ({_pct(sc.get('delta_vs_baseline_percent'))} vs baseline)"
+            )
+        prompt += f"""
+🎛️ What-if Scenarios (driver: {whatif['driver']}, current level {whatif.get('baseline_driver_value', 'N/A')}):
+""" + "\n".join(lines) + "\n"
+
+    prompt += "\nBased on this data, provide your comprehensive strategic analysis and recommendations."
 
     return prompt
 
 
-def generate_recommendations(analysis: dict, forecast_summary: dict) -> str:
+def generate_recommendations(
+    analysis: dict,
+    forecast_summary: dict,
+    whatif: dict | None = None,
+    language: str | None = None,
+) -> str:
     """
     Generate AI-powered business recommendations using OpenAI.
 
     Args:
         analysis: Dictionary from data_agent.analyze_data().
         forecast_summary: Dictionary from forecast_agent.forecast_revenue()['summary'].
+        whatif: Optional scenario table from forecast_revenue()['whatif'].
+        language: Language for the report (default English).
 
     Returns:
         Formatted markdown string of business recommendations.
@@ -172,7 +211,8 @@ def generate_recommendations(analysis: dict, forecast_summary: dict) -> str:
         RecommendationError: If no API key is configured, the API call fails,
             or the model returns an empty response.
     """
-    user_prompt = _build_user_prompt(analysis, forecast_summary)
+    user_prompt = _build_user_prompt(analysis, forecast_summary, whatif)
+    system_prompt = SYSTEM_PROMPT + _language_instruction(language)
 
     try:
         client = _get_client()
@@ -183,7 +223,7 @@ def generate_recommendations(analysis: dict, forecast_summary: dict) -> str:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,

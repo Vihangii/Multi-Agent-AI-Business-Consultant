@@ -95,6 +95,8 @@ export async function analyzeFile(
   if (opts.frequency) params.set("frequency", opts.frequency);
   if (opts.dateColumn) params.set("date_column", opts.dateColumn);
   if (opts.revenueColumn) params.set("revenue_column", opts.revenueColumn);
+  if (opts.regressorColumn) params.set("regressor_column", opts.regressorColumn);
+  if (opts.language && opts.language !== "English") params.set("language", opts.language);
 
   const res = await fetch(`${API_URL}/analyze?${params.toString()}`, {
     method: "POST",
@@ -103,4 +105,16 @@ export async function analyzeFile(
   });
   if (!res.ok) throw new ApiError(await readError(res), res.status);
   return res.json();
+}
+
+/** Query-string form of AnalyzeOptions, reused by the scheduled email job. */
+export function analyzeParams(opts: AnalyzeOptions): Record<string, string> {
+  const out: Record<string, string> = { skip_recommendations: String(opts.skipRecommendations) };
+  if (opts.periods != null) out.periods = String(opts.periods);
+  if (opts.frequency) out.frequency = opts.frequency;
+  if (opts.dateColumn) out.date_column = opts.dateColumn;
+  if (opts.revenueColumn) out.revenue_column = opts.revenueColumn;
+  if (opts.regressorColumn) out.regressor_column = opts.regressorColumn;
+  if (opts.language && opts.language !== "English") out.language = opts.language;
+  return out;
 }

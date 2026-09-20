@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, analyzeFile, getHealth, inspectFile, type FileSource } from "@/lib/api";
 import { deleteBlob, uploadToBlob } from "@/lib/blob";
-import type { AnalyzeResult, HealthResult } from "@/lib/types";
+import type { AnalyzeOptions, AnalyzeResult, HealthResult } from "@/lib/types";
+
+/** What the last successful run used — needed to schedule a monthly re-run. */
+export interface LastRun {
+  fileUrl: string | null;
+  fileName: string;
+  options: AnalyzeOptions;
+}
 import { Results } from "./Results";
 import { AUTO, HORIZON_BOUNDS, Sidebar, type SidebarState } from "./Sidebar";
 import { Card, Notice } from "./ui";
@@ -16,6 +23,8 @@ const initialState: SidebarState = {
   inspectError: null,
   dateColumn: AUTO,
   revenueColumn: AUTO,
+  regressorColumn: "",
+  language: "English",
   frequency: "",
   periods: HORIZON_BOUNDS.D[2],
   skipRecommendations: false,
@@ -30,6 +39,7 @@ export function ConsultantApp() {
   const [runError, setRunError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [resultSkipped, setResultSkipped] = useState(false);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const inspectSeq = useRef(0);
   // Blob URL for the current file when it was too large to POST directly
@@ -89,6 +99,7 @@ export function ConsultantApp() {
         inspectError: null,
         dateColumn: AUTO,
         revenueColumn: AUTO,
+        regressorColumn: "",
       });
       try {
         const info = await inspectFile(await resolveSource(file), state.apiKey || undefined);
@@ -124,11 +135,26 @@ export function ConsultantApp() {
           skipRecommendations: state.skipRecommendations,
           dateColumn: state.dateColumn === AUTO ? null : state.dateColumn,
           revenueColumn: state.revenueColumn === AUTO ? null : state.revenueColumn,
+          regressorColumn: state.regressorColumn || null,
+          language: state.language,
         },
         state.apiKey || undefined,
       );
       setResult(res);
       setResultSkipped(state.skipRecommendations);
+      setLastRun({
+        fileUrl: blobUrl.current,
+        fileName: state.file.name,
+        options: {
+          periods: state.frequency ? state.periods : null,
+          frequency: state.frequency || null,
+          skipRecommendations: state.skipRecommendations,
+          dateColumn: state.dateColumn === AUTO ? null : state.dateColumn,
+          revenueColumn: state.revenueColumn === AUTO ? null : state.revenueColumn,
+          regressorColumn: state.regressorColumn || null,
+          language: state.language,
+        },
+      });
       if (window.innerWidth < 1024) setSidebarOpen(false);
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -189,7 +215,13 @@ export function ConsultantApp() {
           )}
 
           {result ? (
-            <Results result={result} skipRecommendations={resultSkipped} />
+            <Results
+              result={result}
+              skipRecommendations={resultSkipped}
+              lastRun={lastRun}
+              file={state.file}
+              apiKey={state.apiKey}
+            />
           ) : (
             <Welcome running={running} />
           )}

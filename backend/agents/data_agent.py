@@ -117,20 +117,45 @@ def find_revenue_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+def to_numeric_series(series: pd.Series) -> pd.Series:
+    """Coerce a column to numbers, stripping currency symbols, commas, etc."""
+    if not pd.api.types.is_numeric_dtype(series):
+        series = series.astype(str).str.replace(r"[^\d.\-]", "", regex=True)
+    return pd.to_numeric(series, errors="coerce")
+
+
+def numeric_columns(df: pd.DataFrame, exclude: tuple[str, ...] = ()) -> list[str]:
+    """
+    Columns that are numeric, or that become mostly numeric after stripping
+    currency formatting — candidates for a what-if driver (e.g. marketing spend).
+    """
+    out: list[str] = []
+    for col in df.columns:
+        if col in exclude:
+            continue
+        if pd.api.types.is_bool_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col]):
+            continue
+        parsed = to_numeric_series(df[col])
+        if parsed.notna().sum() >= max(1, len(df) * 0.8):
+            out.append(str(col))
+    return out
+
+
 def clean_dataframe(
     df: pd.DataFrame,
     date_col: str,
     revenue_col: str,
+    extra_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Clean and prepare the DataFrame for analysis.
 
     Steps:
-      1. Keep only the date and revenue columns.
+      1. Keep the date and revenue columns (plus any *extra_cols*).
       2. Parse the date column to datetime.
-      3. Convert the revenue column to numeric.
-      4. Drop rows with missing values.
-      5. Remove duplicate dates (keep last).
+      3. Convert the revenue (and extra) columns to numeric.
+      4. Drop rows with missing date/revenue.
+      5. Aggregate duplicate dates (sum).
       6. Sort by date ascending.
       7. Reset the index.
 
@@ -138,27 +163,27 @@ def clean_dataframe(
         df: Raw input DataFrame.
         date_col: Name of the date column.
         revenue_col: Name of the revenue column.
+        extra_cols: Additional numeric columns to carry through (e.g. a
+            what-if driver such as marketing spend). They keep their names.
 
     Returns:
-        Cleaned DataFrame with columns ['ds', 'y'] (Prophet-compatible).
+        Cleaned DataFrame with columns ['ds', 'y', *extra_cols] (Prophet-compatible).
     """
+    extra_cols = [c for c in (extra_cols or []) if c not in (date_col, revenue_col)]
+
     # Work on a copy with only the required columns
-    cleaned = df[[date_col, revenue_col]].copy()
+    cleaned = df[[date_col, revenue_col, *extra_cols]].copy()
 
     # Standardise column names for downstream use (Prophet expects 'ds' and 'y')
-    cleaned.columns = ["ds", "y"]
+    cleaned.columns = ["ds", "y", *extra_cols]
 
     # Parse dates
     cleaned["ds"] = pd.to_datetime(cleaned["ds"], errors="coerce")
 
-    # Parse revenue to numeric (handles currency symbols, commas, etc.)
-    if not pd.api.types.is_numeric_dtype(cleaned["y"]):
-        cleaned["y"] = (
-            cleaned["y"]
-            .astype(str)
-            .str.replace(r"[^\d.\-]", "", regex=True)
-        )
-    cleaned["y"] = pd.to_numeric(cleaned["y"], errors="coerce")
+    # Parse revenue and extras to numeric (handles currency symbols, commas, etc.)
+    cleaned["y"] = to_numeric_series(cleaned["y"])
+    for col in extra_cols:
+        cleaned[col] = to_numeric_series(cleaned[col])
 
     # Drop rows where parsing failed
     cleaned = cleaned.dropna(subset=["ds", "y"])
@@ -167,7 +192,7 @@ def clean_dataframe(
     cleaned = cleaned[cleaned["y"] >= 0]
 
     # Remove duplicates — aggregate by date if needed
-    cleaned = cleaned.groupby("ds", as_index=False)["y"].sum()
+    cleaned = cleaned.groupby("ds", as_index=False)[["y", *extra_cols]].sum(min_count=1)
 
     # Sort chronologically
     cleaned = cleaned.sort_values("ds").reset_index(drop=True)

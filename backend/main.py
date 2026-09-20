@@ -20,24 +20,35 @@ from backend.config import (
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_MB,
     OPENAI_MODEL,
+    RATE_LIMIT_PER_MINUTE,
     has_openai_key,
 )
 from backend.io_utils import UploadError, fetch_remote_file, inspect_dataframe, parse_upload
 from backend.orchestrator import run_pipeline
 
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+from backend.agents.recommendation_agent import SUPPORTED_LANGUAGES
+from backend.observability import (
+    ObservabilityMiddleware,
+    configure_logging,
+    init_sentry,
+    metrics,
+    metrics_response,
 )
+
+# Configure Logging + error tracking
+configure_logging()
 logger = logging.getLogger("backend.main")
+init_sentry()
 
 # Initialize FastAPI App
 app = FastAPI(
     title="Multi-Agent AI Business Consultant API",
     description="Backend API powering automated data analysis, revenue forecasting, and strategic recommendations.",
-    version="1.1.0",
+    version="1.2.0",
 )
+
+# Request id, access log, metrics, rate limiting (added first = outermost)
+app.add_middleware(ObservabilityMiddleware)
 
 # Configure CORS Middleware
 # Defaults to any origin for local development; set CORS_ORIGINS in .env to restrict.
@@ -138,7 +149,16 @@ async def health_check() -> Dict[str, Any]:
         "max_multipart_mb": 4.5 if IS_VERCEL else MAX_UPLOAD_MB,
         "file_url_allowed_hosts": FILE_URL_ALLOWED_HOSTS,
         "platform": "vercel" if IS_VERCEL else "server",
+        "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+        "languages": SUPPORTED_LANGUAGES,
+        "whatif_steps": [-30, -20, -10, 0, 10, 20, 30, 50],
     }
+
+
+@app.get("/metrics", tags=["General"], include_in_schema=False)
+async def prometheus_metrics():
+    """Prometheus text-format metrics for this process."""
+    return metrics_response()
 
 
 @app.post("/inspect", tags=["Analysis"], dependencies=[Depends(require_api_key)])
@@ -184,6 +204,15 @@ async def analyze_dataset(
         default=None,
         description="Name of the revenue column. Auto-detected if omitted.",
     ),
+    regressor_column: str | None = Query(
+        default=None,
+        description="Optional numeric driver column (e.g. marketing_spend) used as a Prophet regressor for what-if scenarios.",
+    ),
+    language: str | None = Query(
+        default=None,
+        max_length=40,
+        description="Language for the AI report, e.g. 'Spanish'. Default English.",
+    ),
 ) -> Dict[str, Any]:
     """
     Accepts a dataset file upload, runs the multi-agent analysis, forecasting,
@@ -203,8 +232,11 @@ async def analyze_dataset(
             skip_recommendations=skip_recommendations,
             date_column=date_column,
             revenue_column=revenue_column,
+            regressor_column=regressor_column,
+            language=language,
         )
     except Exception as e:
+        metrics.record_pipeline("error")
         logger.error("Internal error during pipeline run: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -212,10 +244,12 @@ async def analyze_dataset(
         )
 
     if not pipeline_result.success:
+        metrics.record_pipeline("failed")
         logger.error("Pipeline run failed: %s", pipeline_result.error)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Pipeline execution failed: {pipeline_result.error}",
         )
 
+    metrics.record_pipeline("recommendations_error" if pipeline_result.recommendations_error else "success")
     return pipeline_result.to_dict()

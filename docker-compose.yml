@@ -1,21 +1,8 @@
 services:
-  # The dashboard runs the agents in-process — this single service is the whole app.
-  app:
-    build: .
-    image: ai-business-consultant
-    env_file: .env
-    command: ["streamlit", "run", "frontend/app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
-    ports:
-      - "8501:8501"
-
-  # Optional REST API for programmatic access:  docker compose --profile api up
   api:
-    image: ai-business-consultant
-    profiles: ["api"]
+    build: .
+    image: ai-business-consultant-api
     env_file: .env
-    environment:
-      BACKEND_HOST: 0.0.0.0
-      BACKEND_PORT: 8000
     ports:
       - "8000:8000"
     healthcheck:
@@ -23,3 +10,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  web:
+    build:
+      context: ./web
+      args:
+        # The browser calls the API directly, so this must be reachable from the user's machine
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: ai-business-consultant-web
+    env_file:
+      - path: ./web/.env.local
+        required: false
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy

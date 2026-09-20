@@ -1,6 +1,5 @@
 # Only backend/, api/, vendor/ and requirements.txt are needed in the function bundle.
 web
-frontend
 tests
 .venv
 venv
@@ -12,7 +11,7 @@ docker-compose.yml
 .dockerignore
 run.ps1
 pytest.ini
-requirements-streamlit.txt
+
 requirements-dev.txt
 README.md
 *.md

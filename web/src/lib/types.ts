@@ -8,6 +8,8 @@ export interface InspectResult {
   row_count: number;
   detected_date_column: string | null;
   detected_revenue_column: string | null;
+  /** Numeric columns other than date/revenue — candidates for a what-if driver */
+  numeric_columns: string[];
   preview: Record<string, string>[];
 }
 
@@ -65,6 +67,27 @@ export interface ForecastSummary {
   peak_forecasted_value: number;
   peak_forecasted_date: string;
   accuracy?: Accuracy;
+  regressor?: string;
+}
+
+export interface WhatIfScenario {
+  change_percent: number;
+  driver_value: number | null;
+  forecast_end_value: number;
+  avg_forecasted_value: number;
+  total_forecasted: number;
+  delta_vs_baseline: number;
+  delta_vs_baseline_percent: number | null;
+  series: { ds: string; predicted: number }[];
+}
+
+export interface WhatIf {
+  driver: string | null;
+  /** "regressor" = learned from a driver column; "uplift" = plain % applied to the forecast */
+  method: "regressor" | "uplift";
+  baseline_driver_value: number | null;
+  steps: number[];
+  scenarios: WhatIfScenario[];
 }
 
 export interface ForecastPoint {
@@ -87,11 +110,13 @@ export interface AnalyzeResult {
   cleaned_data: CleanedPoint[];
   forecast_summary: ForecastSummary;
   forecast: ForecastPoint[];
+  whatif?: WhatIf | null;
   recommendations?: string;
   recommendations_error?: string;
   columns: string[];
   date_column: string;
   revenue_column: string;
+  regressor_column: string | null;
   raw_row_count: number;
   cleaned_row_count: number;
 }
@@ -107,6 +132,9 @@ export interface HealthResult {
   max_multipart_mb: number;
   file_url_allowed_hosts: string[];
   platform: "vercel" | "server";
+  rate_limit_per_minute: number;
+  languages: string[];
+  whatif_steps: number[];
 }
 
 export interface AnalyzeOptions {
@@ -115,4 +143,6 @@ export interface AnalyzeOptions {
   skipRecommendations: boolean;
   dateColumn?: string | null;
   revenueColumn?: string | null;
+  regressorColumn?: string | null;
+  language?: string | null;
 }

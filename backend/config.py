@@ -60,3 +60,11 @@ FILE_URL_ALLOWED_HOSTS = [
 
 # True when running as a Vercel serverless function
 IS_VERCEL = bool(os.getenv("VERCEL"))
+
+# === Observability ===
+# Requests per minute allowed per client on POST /analyze (0 disables)
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
+# Error tracking: set a Sentry DSN to enable (requires sentry-sdk)
+SENTRY_DSN = os.getenv("SENTRY_DSN") or None
+# "text" (default) or "json" (one JSON object per line)
+LOG_FORMAT = os.getenv("LOG_FORMAT", "text").strip().lower()

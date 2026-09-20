@@ -17,7 +17,6 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-streamlit.txt
             requirements-dev.txt
 
       - name: Install dependencies
@@ -42,10 +41,12 @@ jobs:
         run: |
           docker run -d --name api -p 8000:8000 -e OPENAI_API_KEY=sk-your-placeholder ai-business-consultant
           for i in $(seq 1 30); do
-            curl -fsS http://localhost:8000/health && exit 0
+            curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/metrics | head -3 && exit 0
             sleep 2
           done
           echo "backend did not become healthy"; docker logs api; exit 1
+      - name: Build web image
+        run: docker build -t ai-business-consultant-web web
 
   web:
     runs-on: ubuntu-latest
@@ -76,7 +77,7 @@ jobs:
           python-version: "3.12"
       - name: Install API requirements into a bundle dir
         env:
-          PIP_NO_COMPILE: "1"
+          PIP_COMPILE: "0"
         run: |
           python -m pip install --disable-pip-version-check --target bundle -r requirements.txt
           cp -r backend api vendor bundle/

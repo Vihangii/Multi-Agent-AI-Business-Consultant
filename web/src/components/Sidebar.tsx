@@ -23,6 +23,8 @@ export interface SidebarState {
   inspectError: string | null;
   dateColumn: string; // AUTO or column name
   revenueColumn: string;
+  regressorColumn: string; // "" = none
+  language: string;
   frequency: Frequency | "";
   periods: number;
   skipRecommendations: boolean;
@@ -181,6 +183,24 @@ export function Sidebar({
                   options={colOptions}
                 />
               </div>
+              <div>
+                <Label
+                  htmlFor="drivercol"
+                  hint="A numeric column that drives revenue (e.g. marketing spend). Enables 'what-if' scenarios learned from your data."
+                >
+                  What-if driver (optional)
+                </Label>
+                <Select
+                  id="drivercol"
+                  value={state.regressorColumn}
+                  onChange={(v) => onChange({ regressorColumn: v })}
+                  options={[{ value: "", label: "None — simple % uplift" }].concat(
+                    (state.inspect.numeric_columns ?? [])
+                      .filter((c) => c !== state.dateColumn && c !== state.revenueColumn)
+                      .map((c) => ({ value: c, label: c })),
+                  )}
+                />
+              </div>
               {(state.inspect.detected_date_column === null ||
                 state.inspect.detected_revenue_column === null) && (
                 <Notice tone="warn">
@@ -289,6 +309,16 @@ export function Sidebar({
             </span>
           </span>
         </label>
+        <div className="mt-3">
+          <Label htmlFor="lang">Report language</Label>
+          <Select
+            id="lang"
+            value={state.language}
+            disabled={state.skipRecommendations}
+            onChange={(v) => onChange({ language: v })}
+            options={(health?.languages ?? ["English"]).map((l) => ({ value: l, label: l }))}
+          />
+        </div>
         {health && !health.openai_configured && !state.skipRecommendations && (
           <Notice tone="info" className="mt-2">
             The API has no OpenAI key — the report stage will be reported as unavailable.

@@ -48,6 +48,8 @@ class PipelineResult:
         # Stage 2: Forecast Agent outputs
         self.forecast_df: pd.DataFrame | None = None
         self.forecast_summary: dict | None = None
+        self.whatif: dict | None = None
+        self.regressor_column: str | None = None
 
         # Stage 3: Recommendation Agent outputs
         self.recommendations: str | None = None
@@ -76,6 +78,9 @@ class PipelineResult:
         if self.forecast_df is not None:
             result["forecast"] = self.forecast_df.to_dict(orient="records")
 
+        if self.whatif is not None:
+            result["whatif"] = self.whatif
+
         if self.recommendations is not None:
             result["recommendations"] = self.recommendations
         if self.recommendations_error is not None:
@@ -85,6 +90,7 @@ class PipelineResult:
         result["columns"] = self.columns
         result["date_column"] = self.date_column
         result["revenue_column"] = self.revenue_column
+        result["regressor_column"] = self.regressor_column
         result["raw_row_count"] = self.raw_row_count
         result["cleaned_row_count"] = self.cleaned_row_count
 
@@ -100,6 +106,7 @@ def _run_data_stage(
     result: PipelineResult,
     date_column: str | None = None,
     revenue_column: str | None = None,
+    regressor_column: str | None = None,
 ) -> pd.DataFrame:
     """
     Stage 1 — Data Agent: detect columns, clean data, and compute statistics.
@@ -109,6 +116,8 @@ def _run_data_stage(
         result: PipelineResult being populated.
         date_column: Explicit date column name; auto-detected if None.
         revenue_column: Explicit revenue column name; auto-detected if None.
+        regressor_column: Optional numeric driver column (e.g. marketing
+            spend) carried through cleaning for what-if scenarios.
 
     Returns:
         Cleaned DataFrame ready for forecasting.
@@ -123,7 +132,7 @@ def _run_data_stage(
     result.columns = [str(c) for c in df.columns]
 
     # Use caller-supplied columns when given, otherwise detect
-    for name, label in ((date_column, "date"), (revenue_column, "revenue")):
+    for name, label in ((date_column, "date"), (revenue_column, "revenue"), (regressor_column, "driver")):
         if name is not None and name not in df.columns:
             raise ValueError(
                 f"The {label} column '{name}' does not exist in the dataset. "
@@ -148,13 +157,26 @@ def _run_data_stage(
             "(e.g. 'revenue', 'sales', 'amount')."
         )
 
+    if regressor_column is not None and regressor_column in (date_col, revenue_col):
+        raise ValueError("The driver column must be different from the date and revenue columns.")
+
     result.date_column = date_col
     result.revenue_column = revenue_col
+    result.regressor_column = regressor_column
     logger.info("  ✔ Detected date column: '%s'", date_col)
     logger.info("  ✔ Detected revenue column: '%s'", revenue_col)
+    if regressor_column:
+        logger.info("  ✔ What-if driver column: '%s'", regressor_column)
 
     # Clean
-    cleaned_df = clean_dataframe(df, date_col, revenue_col)
+    cleaned_df = clean_dataframe(
+        df, date_col, revenue_col, extra_cols=[regressor_column] if regressor_column else None
+    )
+    if regressor_column and cleaned_df[regressor_column].notna().sum() < len(cleaned_df) * 0.8:
+        raise ValueError(
+            f"The driver column '{regressor_column}' is not numeric enough to use "
+            "(needs a number on at least 80% of rows)."
+        )
     if cleaned_df.empty:
         raise ValueError(
             "The dataset is empty after cleaning. "
@@ -185,6 +207,7 @@ def _run_forecast_stage(
     result: PipelineResult,
     periods: int | None = None,
     frequency: str | None = None,
+    regressor_column: str | None = None,
 ) -> None:
     """
     Stage 2 — Forecast Agent: generate revenue forecast with Prophet.
@@ -202,11 +225,14 @@ def _run_forecast_stage(
         kwargs["periods"] = periods
     if frequency is not None:
         kwargs["frequency"] = frequency
+    if regressor_column is not None:
+        kwargs["regressor"] = regressor_column
 
     forecast_output = forecast_revenue(cleaned_df, **kwargs)
 
     result.forecast_df = forecast_output["forecast_df"]
     result.forecast_summary = forecast_output["summary"]
+    result.whatif = forecast_output.get("whatif")
 
     logger.info(
         "  ✔ Forecast generated — trend: %s, predicted growth: %s%%",
@@ -215,12 +241,13 @@ def _run_forecast_stage(
     )
 
 
-def _run_recommendation_stage(result: PipelineResult) -> None:
+def _run_recommendation_stage(result: PipelineResult, language: str | None = None) -> None:
     """
     Stage 3 — Recommendation Agent: produce AI-powered business advice.
 
     Args:
         result: PipelineResult populated by the first two stages.
+        language: Language to write the report in (default English).
     """
     logger.info("🤖 Stage 3/3 — Recommendation Agent: generating insights …")
 
@@ -228,6 +255,8 @@ def _run_recommendation_stage(result: PipelineResult) -> None:
         result.recommendations = generate_recommendations(
             analysis=result.analysis,
             forecast_summary=result.forecast_summary,
+            whatif=result.whatif,
+            language=language,
         )
         logger.info("  ✔ Recommendations generated")
     except RecommendationError as exc:
@@ -250,6 +279,8 @@ def run_pipeline(
     skip_recommendations: bool = False,
     date_column: str | None = None,
     revenue_column: str | None = None,
+    regressor_column: str | None = None,
+    language: str | None = None,
 ) -> PipelineResult:
     """
     Execute the full multi-agent pipeline end-to-end.
@@ -271,6 +302,9 @@ def run_pipeline(
             pipeline still succeeds and ``recommendations_error`` is set.
         date_column: Explicit date column; overrides auto-detection.
         revenue_column: Explicit revenue column; overrides auto-detection.
+        regressor_column: Optional numeric driver column used as a Prophet
+            regressor for what-if scenarios (e.g. ``marketing_spend``).
+        language: Language for the AI report (e.g. "Spanish"). Default English.
 
     Returns:
         A :class:`PipelineResult` containing outputs from every stage.
@@ -306,6 +340,7 @@ def run_pipeline(
             result,
             date_column=date_column,
             revenue_column=revenue_column,
+            regressor_column=regressor_column,
         )
 
         # ------------------------------------------------------------------
@@ -316,13 +351,14 @@ def run_pipeline(
             result,
             periods=periods,
             frequency=frequency,
+            regressor_column=regressor_column,
         )
 
         # ------------------------------------------------------------------
         # Stage 3: Recommendation Agent (optional)
         # ------------------------------------------------------------------
         if not skip_recommendations:
-            _run_recommendation_stage(result)
+            _run_recommendation_stage(result, language=language)
 
         result.success = True
         logger.info("✅ Pipeline completed successfully")
