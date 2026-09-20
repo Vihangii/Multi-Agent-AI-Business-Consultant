@@ -15,14 +15,18 @@ Two frontends share the same backend pipeline:
 - **Next.js** (`web/`) — a React web app **deployable on Vercel** that talks to
   the FastAPI REST API. Best for hosting publicly. See [web/README.md](web/README.md).
 
+The API itself can run as a container (Docker) **or as a Vercel Python
+serverless function** (`api/index.py`) — see [Deploy the API to Vercel](#deploy-the-api-to-vercel).
+
 | Stage | Module | What it does |
 |---|---|---|
 | 1. Data Agent | `backend/agents/data_agent.py` | Detects the date and revenue columns, parses currency strings, aggregates duplicate dates, computes growth / monthly / volatility stats |
 | 2. Forecast Agent | `backend/agents/forecast_agent.py` | Auto-detects daily / weekly / monthly granularity, fits Prophet, returns a ~6-month forecast with 95% intervals, and backtests itself on the last 20% of history (MAPE / MAE / coverage) |
 | 3. Recommendation Agent | `backend/agents/recommendation_agent.py` | Sends the stats + forecast to OpenAI and returns a markdown strategy report |
 | Orchestrator | `backend/orchestrator.py` | Runs the three stages and packages the result |
-| Upload parsing | `backend/io_utils.py` | Shared CSV/Excel validation + parsing used by both the API and the dashboard |
-| API (optional) | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
+| Upload parsing | `backend/io_utils.py` | Shared CSV/Excel validation + parsing used by both the API and the dashboard; allow-listed `file_url` download for large files |
+| API | `backend/main.py` | `GET /`, `GET /health`, `POST /inspect`, `POST /analyze` |
+| Vercel entry | `api/index.py` | Exposes the same FastAPI app as a Vercel serverless function |
 | Streamlit UI | `frontend/app.py` | Dashboard: column picker, KPIs, Plotly forecast chart, accuracy panel, AI report, data tables. Runs the pipeline in-process or via the API |
 | Next.js UI | `web/` | Same features as a React/Tailwind app for Vercel; calls the REST API |
 
@@ -38,7 +42,7 @@ Two frontends share the same backend pipeline:
 # Windows
 py -3.12 -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-streamlit.txt
 
 copy .env.example .env      # then edit .env and set OPENAI_API_KEY
 ```
@@ -47,7 +51,7 @@ copy .env.example .env      # then edit .env and set OPENAI_API_KEY
 # macOS / Linux
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-streamlit.txt
 
 cp .env.example .env        # then edit .env and set OPENAI_API_KEY
 ```
@@ -62,6 +66,7 @@ All settings live in `.env` (see `.env.example`):
 | `MAX_UPLOAD_MB` | `25` | Upload size limit |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `API_KEY` | – | When set, `/analyze` and `/inspect` require an `X-API-Key` header |
+| `FILE_URL_ALLOWED_HOSTS` | `*.public.blob.vercel-storage.com` | Hosts `file_url` inputs may be fetched from |
 | `BACKEND_MODE` | `builtin` | Dashboard engine: `builtin` (in-process) or `remote` (call the API) |
 | `BACKEND_URL` | `http://localhost:8000` | Where the dashboard finds the API in `remote` mode |
 
@@ -118,6 +123,44 @@ docker compose --profile api up   # Docker: adds the API on :8000
 
 Interactive API docs are at http://localhost:8000/docs.
 
+### Deploy the API to Vercel
+
+`api/index.py` exports the FastAPI app; `vercel.json` routes every path to it,
+so `/health`, `/inspect`, `/analyze` and `/docs` are served by **one** Python
+function (each Python function on Vercel ships its own ~200 MB copy of
+pandas + Prophet, so one function, not one per route).
+
+1. Vercel → **New Project** → import this repo → Root Directory: **`/`** (repo root).
+2. Environment variables (Production + Preview):
+   - `PIP_NO_COMPILE` = `1` — **required.** Without it pip writes `.pyc` files
+     and the bundle is ~247 MB, right at Vercel's 250 MB limit; with it, ~202 MB.
+   - `OPENAI_API_KEY` — optional, enables stage 3.
+   - `CORS_ORIGINS` = `https://<your-web-app>.vercel.app`
+   - `API_KEY` — optional `X-API-Key` gate.
+3. Deploy. `/health` should report `"platform": "vercel"`.
+
+**Uploads over 4.5 MB.** Vercel rejects request bodies above 4.5 MB before the
+function runs, so the 25 MB cap cannot be reached with a direct multipart
+POST. The API therefore also accepts `file_url` (form field or query param),
+downloads the file itself, and enforces `MAX_UPLOAD_MB` on the download. The
+Next.js app handles this automatically: when `/health` reports
+`max_multipart_mb: 4.5`, files above that are uploaded from the browser to
+**Vercel Blob** and passed by URL. To enable it, add a Blob store to the *web*
+Vercel project (Storage → Blob), which sets `BLOB_READ_WRITE_TOKEN`. Only
+allow-listed hosts (`FILE_URL_ALLOWED_HOSTS`) can be fetched, so the function
+can't be used as an open proxy.
+
+Other notes:
+
+- Prophet's optional plotting dependency is satisfied by an empty stub wheel
+  (`vendor/matplotlib-99.0.0-py3-none-any.whl`) to keep ~90 MB of matplotlib /
+  fontTools / pillow out of the bundle. See `vendor/matplotlib-stub/README.md`.
+- `maxDuration` is 60 s in `vercel.json`. A full run (two Prophet fits +
+  OpenAI) takes 5–25 s. Raise it on Pro if you use large datasets.
+- Verified locally: the pipeline runs on a read-only filesystem as a non-root
+  user (Lambda conditions) and the bundle measures 202 MB with `PIP_NO_COMPILE=1`.
+  CI has a `vercel-bundle` job that fails if it grows past 240 MB.
+
 ### Input data
 
 Any CSV / `.xlsx` / `.xls` with at least one date-like column and one revenue-like
@@ -142,6 +185,9 @@ curl -H "X-API-Key: $API_KEY" -F "file=@sales.csv" \
   "http://localhost:8000/analyze?date_column=OrderDate&revenue_column=Total"
 ```
 
+Both `/inspect` and `/analyze` take **either** a multipart `file` **or** a
+`file_url` (form field or `?file_url=`) pointing at an allow-listed host.
+
 `/analyze` query parameters:
 
 - `periods` — forecast horizon (2–1000). Default ≈ 6 months for the detected frequency.
@@ -161,7 +207,7 @@ Both upload endpoints reject files over `MAX_UPLOAD_MB` (413) and, when
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt   # = requirements-streamlit.txt + pytest
 pytest                 # full suite (~1 min, fits several Prophet models)
 pytest -m "not slow"   # fast unit tests only
 ```
@@ -172,10 +218,13 @@ Docker image, and lints + builds the Next.js app on every push and PR.
 ## Project layout
 
 ```
+api/index.py              Vercel serverless entry (re-exports the FastAPI app)
+vercel.json, .vercelignore
+vendor/                   matplotlib stub wheel (bundle size)
 backend/
   config.py               settings from .env
-  io_utils.py             shared upload parsing
-  main.py                 FastAPI app (optional)
+  io_utils.py             shared upload parsing + file_url download
+  main.py                 FastAPI app
   orchestrator.py         pipeline runner
   agents/
     data_agent.py

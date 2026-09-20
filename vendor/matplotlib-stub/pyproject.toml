@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matplotlib"
+version = "99.0.0"
+description = "Empty stand-in for matplotlib. Satisfies prophet's optional plotting dependency without shipping ~90 MB of plotting libraries into the Vercel function bundle."
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["matplotlib"]

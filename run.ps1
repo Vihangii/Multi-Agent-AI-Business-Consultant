@@ -22,7 +22,7 @@ if (-not (Test-Path $python)) {
     Write-Host "No virtualenv found. Creating one with Python 3.12 and installing dependencies..." -ForegroundColor Yellow
     py -3.12 -m venv (Join-Path $root ".venv")
     & $python -m pip install --quiet --upgrade pip
-    & $python -m pip install --quiet -r (Join-Path $root "requirements.txt")
+    & $python -m pip install --quiet -r (Join-Path $root "requirements-streamlit.txt")
 }
 
 if (-not (Test-Path (Join-Path $root ".env"))) {

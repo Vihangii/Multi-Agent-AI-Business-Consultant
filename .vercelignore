@@ -1,0 +1,21 @@
+# Only backend/, api/, vendor/ and requirements.txt are needed in the function bundle.
+web
+frontend
+tests
+.venv
+venv
+.github
+.pytest_cache
+__pycache__
+Dockerfile
+docker-compose.yml
+.dockerignore
+run.ps1
+pytest.ini
+requirements-streamlit.txt
+requirements-dev.txt
+README.md
+*.md
+!vendor/matplotlib-stub/README.md
+.env
+.env.*

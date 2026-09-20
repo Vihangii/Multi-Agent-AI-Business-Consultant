@@ -8,9 +8,16 @@ Browser ──▶ Next.js (Vercel, static)  ──▶  FastAPI backend (Docker /
                                              └─ Data Agent → Prophet → OpenAI
 ```
 
-The browser talks to the API **directly** (`NEXT_PUBLIC_API_URL`). Routing
-uploads through a Vercel serverless function would cap them at 4.5 MB, so the
-25 MB limit is enforced client-side (`validateFile`) and server-side (413).
+The browser talks to the API **directly** (`NEXT_PUBLIC_API_URL`). The 25 MB
+limit is enforced client-side (`validateFile`) and server-side (413).
+
+**Large files when the API is on Vercel.** Vercel functions reject bodies over
+4.5 MB, so when `/health` reports `max_multipart_mb: 4.5` the app uploads
+bigger files from the browser to Vercel Blob (`src/lib/blob.ts`, token minted
+by `src/app/api/upload/route.ts`) and sends the API a `file_url` instead. This
+needs a Blob store connected to the Vercel project (`BLOB_READ_WRITE_TOKEN`).
+Without one, files over 4.5 MB get a clear error; smaller files still work.
+The blob is deleted when a different file is chosen.
 
 ## Features
 
@@ -50,7 +57,9 @@ uvicorn backend.main:app --reload --port 8000
 3. Environment variables:
    - `NEXT_PUBLIC_API_URL` = `https://<your-backend-host>`
    - `NEXT_PUBLIC_MAX_UPLOAD_MB` = `25` (optional)
-4. Deploy. Vercel auto-detects Next.js; no `vercel.json` is needed.
+4. (If the API is on Vercel) **Storage → Create Blob store → connect** to this
+   project so uploads over 4.5 MB work.
+5. Deploy. Vercel auto-detects Next.js; no `vercel.json` is needed.
 
 If the backend has `API_KEY` set, the sidebar shows an API-key field and sends
 it as `X-API-Key`. Note that anything the browser sends is visible to the user,
@@ -76,8 +85,10 @@ src/
     Results        tabs: dashboard, forecast (+ chart, accuracy), AI report, data
     ForecastChart  Recharts composed chart
     ui             cards, notices, metrics, selects
+  app/api/upload   Vercel Blob client-upload token route (+ DELETE cleanup)
   lib/
-    api            fetch wrappers for /health, /inspect, /analyze
+    api            fetch wrappers for /health, /inspect, /analyze (file or file_url)
+    blob           browser → Vercel Blob upload helper
     types          response shapes (mirror the Python side)
     format         money / percent / date formatters
     sample         seeded synthetic sample CSV

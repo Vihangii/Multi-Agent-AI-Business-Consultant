@@ -7,13 +7,22 @@ import logging
 from typing import Any, Dict
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Security, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Security, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
-from backend.config import API_KEY, CORS_ORIGINS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, OPENAI_MODEL, has_openai_key
-from backend.io_utils import UploadError, inspect_dataframe, parse_upload
+from backend.config import (
+    API_KEY,
+    CORS_ORIGINS,
+    FILE_URL_ALLOWED_HOSTS,
+    IS_VERCEL,
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_MB,
+    OPENAI_MODEL,
+    has_openai_key,
+)
+from backend.io_utils import UploadError, fetch_remote_file, inspect_dataframe, parse_upload
 from backend.orchestrator import run_pipeline
 
 # Configure Logging
@@ -64,16 +73,36 @@ async def require_api_key(provided: str | None = Security(_api_key_header)) -> N
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _read_upload(file: UploadFile) -> pd.DataFrame:
-    """Validate, size-check and parse an uploaded CSV/Excel file."""
-    # Read at most one byte over the limit so oversized files are rejected
-    # without buffering the whole thing.
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
+# Vercel serverless functions reject request bodies over 4.5 MB before the
+# function runs, so files bigger than that are uploaded to Vercel Blob by the
+# browser and passed here as `file_url` instead of a multipart `file`.
+_FILE_DESC = "The CSV or Excel file (multipart). Omit and pass file_url for files over 4.5 MB on Vercel."
+_URL_DESC = "URL of an already-uploaded CSV/Excel file (e.g. Vercel Blob). Host must be allow-listed."
+
+
+async def _read_upload(file: UploadFile | None, file_url: str | None) -> tuple[str, pd.DataFrame]:
+    """
+    Validate, size-check and parse the input file, given either as a multipart
+    upload or as an allow-listed URL. Returns (filename, DataFrame).
+    """
+    if file is None and not file_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide either a multipart 'file' or a 'file_url'.",
+        )
     try:
-        return await run_in_threadpool(parse_upload, file.filename or "", content)
+        if file is not None:
+            filename = file.filename or ""
+            # Read at most one byte over the limit so oversized files are
+            # rejected without buffering the whole thing.
+            content = await file.read(MAX_UPLOAD_BYTES + 1)
+        else:
+            filename, content = await run_in_threadpool(fetch_remote_file, file_url)
+        df = await run_in_threadpool(parse_upload, filename, content)
+        return filename, df
     except UploadError as e:
         if e.status_code == 422:
-            logger.error("Failed to parse uploaded file: %s", e)
+            logger.error("Failed to read input file: %s", e)
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
@@ -105,25 +134,33 @@ async def health_check() -> Dict[str, Any]:
         "openai_model": OPENAI_MODEL,
         "max_upload_mb": MAX_UPLOAD_MB,
         "auth_required": bool(API_KEY),
+        # Multipart bodies are capped by the platform on Vercel; larger files must use file_url
+        "max_multipart_mb": 4.5 if IS_VERCEL else MAX_UPLOAD_MB,
+        "file_url_allowed_hosts": FILE_URL_ALLOWED_HOSTS,
+        "platform": "vercel" if IS_VERCEL else "server",
     }
 
 
 @app.post("/inspect", tags=["Analysis"], dependencies=[Depends(require_api_key)])
 async def inspect_dataset(
-    file: UploadFile = File(..., description="The CSV or Excel file to inspect."),
+    file: UploadFile | None = File(default=None, description=_FILE_DESC),
+    file_url: str | None = Form(default=None, description=_URL_DESC),
+    file_url_q: str | None = Query(default=None, alias="file_url", description=_URL_DESC),
 ) -> Dict[str, Any]:
     """
     Cheap pre-flight: returns the column names, the columns auto-detection
     would pick, and a small preview — so a client can let the user confirm
     or override the columns before running the full pipeline.
     """
-    df = await _read_upload(file)
+    _, df = await _read_upload(file, file_url or file_url_q)
     return inspect_dataframe(df)
 
 
 @app.post("/analyze", tags=["Analysis"], dependencies=[Depends(require_api_key)])
 async def analyze_dataset(
-    file: UploadFile = File(..., description="The CSV or Excel file containing transaction/revenue data."),
+    file: UploadFile | None = File(default=None, description=_FILE_DESC),
+    file_url: str | None = Form(default=None, description=_URL_DESC),
+    file_url_q: str | None = Query(default=None, alias="file_url", description=_URL_DESC),
     periods: int | None = Query(
         default=None,
         description="Number of periods to forecast into the future. Defaults to a ~6-month horizon for the detected/selected frequency.",
@@ -152,11 +189,11 @@ async def analyze_dataset(
     Accepts a dataset file upload, runs the multi-agent analysis, forecasting,
     and business recommendation pipeline, and returns the comprehensive results.
     """
-    df = await _read_upload(file)
+    filename, df = await _read_upload(file, file_url or file_url_q)
 
     # The pipeline is CPU-bound (Prophet) and makes a blocking HTTP call (OpenAI),
     # so run it off the event loop to keep the server responsive.
-    logger.info("Starting pipeline execution for uploaded file: %s", file.filename)
+    logger.info("Starting pipeline execution for uploaded file: %s", filename)
     try:
         pipeline_result = await run_in_threadpool(
             run_pipeline,

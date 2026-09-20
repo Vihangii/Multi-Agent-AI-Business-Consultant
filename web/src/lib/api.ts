@@ -58,15 +58,26 @@ export async function getHealth(): Promise<HealthResult> {
   return res.json();
 }
 
+/**
+ * The file is sent either as a multipart body or, when it has already been
+ * uploaded to Vercel Blob, as a `file_url` form field the API downloads itself.
+ */
+export type FileSource = { file: File } | { fileUrl: string };
+
+function sourceForm(src: FileSource): FormData {
+  const form = new FormData();
+  if ("file" in src) form.append("file", src.file, src.file.name);
+  else form.append("file_url", src.fileUrl);
+  return form;
+}
+
 export async function inspectFile(
-  file: File,
+  src: FileSource,
   apiKey?: string,
 ): Promise<InspectResult> {
-  const form = new FormData();
-  form.append("file", file, file.name);
   const res = await fetch(`${API_URL}/inspect`, {
     method: "POST",
-    body: form,
+    body: sourceForm(src),
     headers: headers(apiKey),
   });
   if (!res.ok) throw new ApiError(await readError(res), res.status);
@@ -74,7 +85,7 @@ export async function inspectFile(
 }
 
 export async function analyzeFile(
-  file: File,
+  src: FileSource,
   opts: AnalyzeOptions,
   apiKey?: string,
 ): Promise<AnalyzeResult> {
@@ -85,11 +96,9 @@ export async function analyzeFile(
   if (opts.dateColumn) params.set("date_column", opts.dateColumn);
   if (opts.revenueColumn) params.set("revenue_column", opts.revenueColumn);
 
-  const form = new FormData();
-  form.append("file", file, file.name);
   const res = await fetch(`${API_URL}/analyze?${params.toString()}`, {
     method: "POST",
-    body: form,
+    body: sourceForm(src),
     headers: headers(apiKey),
   });
   if (!res.ok) throw new ApiError(await readError(res), res.status);

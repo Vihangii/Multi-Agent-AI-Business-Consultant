@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, analyzeFile, getHealth, inspectFile } from "@/lib/api";
+import { ApiError, analyzeFile, getHealth, inspectFile, type FileSource } from "@/lib/api";
+import { deleteBlob, uploadToBlob } from "@/lib/blob";
 import type { AnalyzeResult, HealthResult } from "@/lib/types";
 import { Results } from "./Results";
 import { AUTO, HORIZON_BOUNDS, Sidebar, type SidebarState } from "./Sidebar";
@@ -31,6 +32,32 @@ export function ConsultantApp() {
   const [resultSkipped, setResultSkipped] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const inspectSeq = useRef(0);
+  // Blob URL for the current file when it was too large to POST directly
+  const blobUrl = useRef<string | null>(null);
+
+  /**
+   * Decide how to hand the file to the API. On Vercel the API can't receive
+   * multipart bodies over 4.5 MB, so bigger files are uploaded to Vercel Blob
+   * first and passed by URL.
+   */
+  const resolveSource = useCallback(
+    async (file: File): Promise<FileSource> => {
+      const capMb = health?.max_multipart_mb ?? Infinity;
+      if (file.size <= capMb * 1024 * 1024) return { file };
+      if (blobUrl.current) return { fileUrl: blobUrl.current };
+      try {
+        const url = await uploadToBlob(file);
+        blobUrl.current = url;
+        return { fileUrl: url };
+      } catch (e) {
+        throw new Error(
+          `This file is ${(file.size / 1024 / 1024).toFixed(1)} MB, over the ${capMb} MB direct-upload limit of the API host, ` +
+            `and large-file uploads are not available (${e instanceof Error ? e.message : String(e)}).`,
+        );
+      }
+    },
+    [health],
+  );
 
   const patch = useCallback((p: Partial<SidebarState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -46,6 +73,10 @@ export function ConsultantApp() {
   const handleFile = useCallback(
     async (file: File | null) => {
       const seq = ++inspectSeq.current;
+      if (blobUrl.current) {
+        void deleteBlob(blobUrl.current);
+        blobUrl.current = null;
+      }
       if (!file) {
         patch({ file: null, fileError: null, inspect: null, inspectError: null });
         return;
@@ -60,7 +91,7 @@ export function ConsultantApp() {
         revenueColumn: AUTO,
       });
       try {
-        const info = await inspectFile(file, state.apiKey || undefined);
+        const info = await inspectFile(await resolveSource(file), state.apiKey || undefined);
         if (seq !== inspectSeq.current) return; // a newer upload superseded this one
         patch({
           inspecting: false,
@@ -77,7 +108,7 @@ export function ConsultantApp() {
         });
       }
     },
-    [patch, state.apiKey],
+    [patch, state.apiKey, resolveSource],
   );
 
   async function run() {
@@ -86,7 +117,7 @@ export function ConsultantApp() {
     setRunError(null);
     try {
       const res = await analyzeFile(
-        state.file,
+        await resolveSource(state.file),
         {
           periods: state.frequency ? state.periods : null,
           frequency: state.frequency || null,

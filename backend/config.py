@@ -47,3 +47,16 @@ def require_openai_key() -> str:
 # Optional shared secret. When set, /analyze and /inspect require an
 # X-API-Key header with this value. Leave unset for open local development.
 API_KEY = os.getenv("API_KEY") or None
+
+# Remote file ingestion. Vercel caps request bodies at 4.5 MB, so large files
+# are uploaded to Vercel Blob by the browser and passed to the API as a URL.
+# Only these hosts (exact or "*.suffix" wildcards) may be fetched — this keeps
+# the function from acting as an open proxy. Comma-separated.
+FILE_URL_ALLOWED_HOSTS = [
+    h.strip().lower()
+    for h in os.getenv("FILE_URL_ALLOWED_HOSTS", "*.public.blob.vercel-storage.com").split(",")
+    if h.strip()
+]
+
+# True when running as a Vercel serverless function
+IS_VERCEL = bool(os.getenv("VERCEL"))

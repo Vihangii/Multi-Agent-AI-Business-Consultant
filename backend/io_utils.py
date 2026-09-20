@@ -5,11 +5,14 @@ which entry point receives it.
 """
 
 import io
+from fnmatch import fnmatch
+from urllib.parse import urlsplit
 
+import httpx
 import pandas as pd
 
 from backend.agents.data_agent import find_date_column, find_revenue_column
-from backend.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
+from backend.config import FILE_URL_ALLOWED_HOSTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 
 ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xls")
 
@@ -62,3 +65,65 @@ def inspect_dataframe(df: pd.DataFrame) -> dict:
         "detected_revenue_column": find_revenue_column(df),
         "preview": df.head(5).astype(str).to_dict(orient="records"),
     }
+
+
+def _host_allowed(host: str) -> bool:
+    host = host.lower()
+    return any(
+        fnmatch(host, pattern) if "*" in pattern else host == pattern
+        for pattern in FILE_URL_ALLOWED_HOSTS
+    )
+
+
+def fetch_remote_file(url: str, timeout: float = 30.0) -> tuple[str, bytes]:
+    """
+    Download a previously uploaded file (e.g. from Vercel Blob) for analysis.
+
+    The host must be on FILE_URL_ALLOWED_HOSTS and the body is streamed so a
+    download is abandoned as soon as it exceeds MAX_UPLOAD_BYTES.
+
+    Returns:
+        (filename, content) — filename is the last path segment of the URL.
+
+    Raises:
+        UploadError: 400 for a bad/forbidden URL, 413 for an oversized file,
+            422 if the download fails.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise UploadError("file_url must be an http(s) URL.", 400)
+    if not _host_allowed(parts.hostname):
+        raise UploadError(
+            f"Downloads from '{parts.hostname}' are not allowed. "
+            f"Permitted hosts: {', '.join(FILE_URL_ALLOWED_HOSTS)}",
+            400,
+        )
+
+    filename = parts.path.rsplit("/", 1)[-1] or "upload"
+    lower = filename.lower()
+    if not lower.endswith(ALLOWED_EXTENSIONS):
+        raise UploadError(
+            "Unsupported file format. The URL must end in .csv, .xlsx, or .xls.", 400
+        )
+
+    try:
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            declared = resp.headers.get("content-length")
+            if declared and int(declared) > MAX_UPLOAD_BYTES:
+                raise UploadError(
+                    f"File too large. Maximum upload size is {MAX_UPLOAD_MB} MB.", 413
+                )
+            buf = bytearray()
+            for chunk in resp.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > MAX_UPLOAD_BYTES:
+                    raise UploadError(
+                        f"File too large. Maximum upload size is {MAX_UPLOAD_MB} MB.", 413
+                    )
+    except UploadError:
+        raise
+    except httpx.HTTPError as e:
+        raise UploadError(f"Could not download file_url: {e}", 422) from e
+
+    return filename, bytes(buf)

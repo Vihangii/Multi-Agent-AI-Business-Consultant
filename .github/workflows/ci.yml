@@ -17,6 +17,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-streamlit.txt
             requirements-dev.txt
 
       - name: Install dependencies
@@ -63,3 +64,26 @@ jobs:
       - run: npm run build
         env:
           NEXT_PUBLIC_API_URL: https://api.example.com
+
+  vercel-bundle:
+    # Vercel Python functions must stay under 250 MB unzipped. Fail early if the
+    # API dependency set grows past that (measured the way Vercel installs it).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install API requirements into a bundle dir
+        env:
+          PIP_NO_COMPILE: "1"
+        run: |
+          python -m pip install --disable-pip-version-check --target bundle -r requirements.txt
+          cp -r backend api vendor bundle/
+      - name: Check size
+        run: |
+          size=$(du -sm bundle | cut -f1)
+          echo "Vercel function bundle: ${size} MB (limit 250)"
+          test "$size" -lt 240
+      - name: Smoke-import the function entry point
+        run: cd bundle && python -c "from api.index import app; print(app.title)"

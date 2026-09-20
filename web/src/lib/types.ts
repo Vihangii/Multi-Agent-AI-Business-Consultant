@@ -103,6 +103,10 @@ export interface HealthResult {
   openai_model: string;
   max_upload_mb: number;
   auth_required: boolean;
+  /** Platform cap on multipart bodies (4.5 on Vercel). Larger files must go via file_url. */
+  max_multipart_mb: number;
+  file_url_allowed_hosts: string[];
+  platform: "vercel" | "server";
 }
 
 export interface AnalyzeOptions {
